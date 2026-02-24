@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ironcrab = { path = ".." }
+# Sibling-Layout: Iron_crab und ironcrab-eval nebeneinander (lokal + CI)
+ironcrab = { path = "../Iron_crab" }
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]
