@@ -9,6 +9,7 @@ ironcrab = { path = "../Iron_crab" }
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]
+anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 rust_decimal = { version = "1", features = ["serde"] }

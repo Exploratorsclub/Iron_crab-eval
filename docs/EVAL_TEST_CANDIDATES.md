@@ -28,6 +28,7 @@
 | `invariants_lock_manager.rs` | ✅ | ✅ | Bereits Eval-Invariante |
 | `ipc_schema_serde.rs` | ✅ | ⚠️ | Bereits Eval, Schema-Spec verknüpft |
 | `pump_amm_geyser_first.rs` | ✅ | ✅ | Bereits Eval-Invariante |
+| `invariants_6005_detection.rs` | ✅ | ✅ | 6005-Retry Error-Detection |
 
 ---
 

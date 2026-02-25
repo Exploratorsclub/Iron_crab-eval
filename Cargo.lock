@@ -2309,6 +2309,7 @@ dependencies = [
 name = "ironcrab-eval"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ironcrab",
  "rust_decimal",
  "serde_json",
