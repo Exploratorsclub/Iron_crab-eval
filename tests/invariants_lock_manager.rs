@@ -1,6 +1,7 @@
-//! Invarianten: LockManager
+//! Invarianten: LockManager (INVARIANTS.md §1.2, §2 Restart Idempotency)
 //!
 //! Verifiziert: total_locked + available konsistent, kein doppelter Lock pro Intent.
+//! no_double_lock_same_intent trägt zu Restart Idempotency bei: gleicher Intent darf nicht erneut verarbeitet werden.
 
 use ironcrab::storage::{LockHolder, LockManager, LockResult};
 use std::collections::HashMap;

@@ -2,6 +2,9 @@
 //!
 //! Verifiziert: MarketEvent, TradeIntent, ExecutionResult, DecisionRecord
 //! bleiben bei JSON roundtrip strukturell erhalten.
+//!
+//! System-Invariante Intent Causality Chain (INVARIANTS.md §2): Jede Execution
+//! rückverfolgbar zu decision_id und intent_id.
 
 use ironcrab::ipc::{
     CheckResult, DecisionOutcome, DecisionRecord, ExecutionResult, ExecutionStatus, ExplicitAmount,
@@ -111,4 +114,59 @@ fn decision_record_roundtrip() {
     assert_eq!(parsed.decision_id, record.decision_id);
     assert_eq!(parsed.intent_id, record.intent_id);
     assert_eq!(parsed.outcome, DecisionOutcome::Rejected);
+}
+
+/// Intent Causality Chain (INVARIANTS.md §2): Jede Execution rückverfolgbar zu decision_id und intent_id.
+#[test]
+fn intent_causality_chain() {
+    let intent_id = "intent-corr-001";
+    let decision_id = "dec-corr-001";
+
+    let intent = TradeIntent::new(
+        "test",
+        "v0.1.0",
+        "run-test",
+        intent_id.to_string(),
+        "test-strategy",
+        IntentTier::Tier1,
+        IntentOrigin::StrategyA,
+        ExplicitAmount::new(100, 9),
+        TradeResources::default(),
+        0,
+        100,
+        TradeSide::Buy,
+        TradingRegime::NotApplicable,
+    );
+
+    let decision = DecisionRecord::new_rejected(
+        "test",
+        "v0.1.0",
+        "run-test",
+        decision_id.to_string(),
+        intent_id.to_string(),
+        "test-strategy".to_string(),
+        IntentOrigin::StrategyA,
+        TradingRegime::NotApplicable,
+        vec![],
+        "TEST".to_string(),
+    );
+
+    let execution = ExecutionResult::new_sent(
+        "test",
+        "v0.1.0",
+        "run-test",
+        "exe-corr-001".to_string(),
+        decision_id.to_string(),
+        intent_id.to_string(),
+        "test-strategy".to_string(),
+        Some("So11111111111111111111111111111111111111112".to_string()),
+        None,
+        None,
+    );
+
+    assert_eq!(intent.intent_id, intent_id);
+    assert_eq!(decision.intent_id, intent_id);
+    assert_eq!(decision.decision_id, decision_id);
+    assert_eq!(execution.intent_id, intent_id);
+    assert_eq!(execution.decision_id, decision_id);
 }
