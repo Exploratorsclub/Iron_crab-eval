@@ -48,9 +48,18 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Datei:** `tests/invariants_arbitrage_profit.rs`
 - **Invariante:** `compute_net_profit` filtert korrekt nach ROI und tx_cost
 
-### A.7 IPC / Schema
+### A.7 IPC / Schema (STORAGE_CONVENTIONS §4, DoD §B/E)
 - **Datei:** `tests/ipc_schema_serde.rs`
-- **Intent Causality Chain:** Jede Execution rückverfolgbar zu decision_id und intent_id
+- **Invarianten:**
+  1. **RecordHeader:** Nach Serde-Roundtrip sind schema_version, component, build, run_id erhalten; ts_unix_ms > 0.
+  2. **ExplicitAmount:** Nach Roundtrip sind raw, decimals, ui erhalten (DoD §B Units).
+  3. **MarketEvent:** Nach Roundtrip sind event_id, source, slot, kind erhalten (inkl. TokenMintInfo).
+  4. **TradeIntent:** Nach Roundtrip sind intent_id, source, tier, required_capital, resources, origin_type, regime, execution.min_out erhalten.
+  5. **DecisionRecord:** Nach Roundtrip sind decision_id, intent_id, checks, outcome, source, primary_reject_reason, simulate (bei SimFailed) erhalten.
+  6. **ExecutionResult:** Nach Roundtrip sind execution_id, decision_id, intent_id, signature, status, source, fees, pnl, fill_status, fill_unavailable_reason, error_code erhalten.
+  7. **RejectReason:** Jeder Eintrag serialisiert/deserialisiert zu identischem Wert (DoD §J SCREAMING_SNAKE_CASE).
+  8. **Intent Causality Chain:** intent_id verknüpft Intent → Decision → Execution.
+  9. **JSONL:** Jede Zeile valides JSON; Records zeilenweise parsebar.
 
 ### A.8 6005 BondingCurveComplete-Erkennung
 - **Datei:** `tests/invariants_6005_detection.rs`

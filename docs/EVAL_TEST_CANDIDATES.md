@@ -26,7 +26,7 @@
 |-------|-----------|-----------------|--------|
 | `invariants_quote_monotonic.rs` | ✅ | ✅ | Bereits Eval-Invariante |
 | `invariants_lock_manager.rs` | ✅ | ✅ | Bereits Eval-Invariante |
-| `ipc_schema_serde.rs` | ✅ | ⚠️ | Bereits Eval, Schema-Spec verknüpft |
+| `ipc_schema_serde.rs` | ✅ | ✅ | IPC Schema Spec (STORAGE_CONVENTIONS §4, DoD §B/E) |
 | `pump_amm_geyser_first.rs` | ✅ | ✅ | Bereits Eval-Invariante |
 | `invariants_6005_detection.rs` | ✅ | ✅ | 6005-Retry Error-Detection |
 
@@ -59,11 +59,11 @@
 
 | Datei | Tests | Blackbox? | Spec-Invariante? | Anmerkung |
 |-------|-------|-----------|-----------------|-----------|
-| `ipc_schema_roundtrip.rs` | Alle Schema-Tests | ✅ | ✅ | STORAGE_CONVENTIONS §4, DoD §B/E |
+| `ipc_schema_roundtrip.rs` | Alle Schema-Tests | ✅ | ✅ | Migriert → ipc_schema_serde.rs |
 | `golden_replay_test.rs` | `golden_replay_*` | ❌ | ✅ | Nutzt `simulate_decision()` – **nicht** echte Execution-Engine API. Spec: DoD §G Replay-Determinismus. |
 
 **Migrationsplan (Priorität 2):**
-- **ipc_schema_roundtrip**: Schema-Roundtrip-Tests → `tests/ipc_schema_spec.rs` (erweitert aus `ipc_schema_serde.rs`)
+- **ipc_schema_roundtrip**: Migriert – Schema-Roundtrip-Tests in `tests/ipc_schema_serde.rs` (Spec-getrieben neu implementiert, STORAGE_CONVENTIONS §4, DoD §B/E)
 - **golden_replay**: Invariante „deterministisches Replay“ ist Spec-konform, aber aktuell als **Unit-Test** mit Nachbau der Engine-Logik. **Eval-Variante**: Blackbox über echte execution-engine API oder über NATS-Intent → DecisionRecord-End-to-End. Das erfordert entweder:
   - (A) Subprocess/Integration: Intent per NATS senden, Decision per JSONL/Fixture vergleichen
   - (B) Invariante nur dokumentieren, konkreten Blackbox-Test später ergänzen
@@ -136,7 +136,7 @@
 | IPC Schema (erweitert) | `ipc_schema_roundtrip.rs` | `tests/ipc_schema_spec.rs` (Merge mit `ipc_schema_serde.rs`) |
 | Golden Replay (Blackbox-Variante) | `golden_replay_test.rs` | `tests/golden_replay_blackbox.rs` (neu, über API/NATS) |
 
-**Bereits in eval:** `invariants_quote_monotonic`, `invariants_lock_manager`, `ipc_schema_serde`, `pump_amm_geyser_first`
+**Bereits in eval:** `invariants_quote_monotonic`, `invariants_lock_manager`, `ipc_schema_serde` (14 Tests, STORAGE_CONVENTIONS §4, DoD §B/E), `pump_amm_geyser_first`, `invariants_6005_detection`
 
 ---
 
