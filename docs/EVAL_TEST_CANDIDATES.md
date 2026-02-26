@@ -29,7 +29,7 @@
 | `ipc_schema_serde.rs` | ✅ | ✅ | IPC Schema Spec (STORAGE_CONVENTIONS §4, DoD §B/E) |
 | `pump_amm_geyser_first.rs` | ✅ | ✅ | Bereits Eval-Invariante |
 | `invariants_6005_detection.rs` | ✅ | ✅ | 6005-Retry Error-Detection |
-| `invariants_router_slippage.rs` | ✅ | ✅ | cumulative_min_out + Multi-Hop min_out |
+| `invariants_router_slippage.rs` | ✅ | ✅ | cumulative_min_out + Multi-Hop min_out + Best Quote Selection |
 | `invariants_dex_connector.rs` | ✅ | ✅ | DEX Connector Contracts (5 Tests) |
 | `invariants_arbitrage_profit.rs` | ✅ | ✅ | Arbitrage Profit-Filter |
 
@@ -78,7 +78,7 @@
 | Datei | Tests | Blackbox? | Spec-Invariante? | Empfehlung |
 |-------|-------|-----------|-----------------|------------|
 | `router_hops2_plan.rs` | `router_builds_hops2_plan_with_min_out` | ✅ | ✅ | Migriert → invariants_router_slippage.rs |
-| `router_best_quote.rs` | `router_picks_higher_out_amount` | ✅ | ⚠️ | Evtl. Invariante „Best Quote Selection“; eher Unit |
+| `router_best_quote.rs` | `router_picks_higher_out_amount` | ✅ | ✅ | Migriert → invariants_router_slippage.rs |
 | `arbitrage_cycle_pruning.rs` | `pruning_keeps_profitable_cycle` | ✅ | ⚠️ | Arbitrage-Engine; Evtl. Invariante; eher Unit |
 | `arbitrage_profit_ranking.rs` | `profit_ranking_orders_cycles` | ✅ | ⚠️ | Evtl. Invariante; eher Unit |
 | `arbitrage_edge_aggregate.rs` | `aggregate_picks_higher_output` | ✅ | ⚠️ | Evtl. Invariante; eher Unit |

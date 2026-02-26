@@ -40,11 +40,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Invariante:** Cache-Hit liefert Quote und pool_accounts ohne RPC-Aufruf.
 - **Kontext:** I-4, I-16 — Geyser autoritativ im Hot Path
 
-### A.5 Router Slippage
+### A.5 Router Slippage & Best Quote
 - **Datei:** `tests/invariants_router_slippage.rs`
 - **Invarianten:**
   - `cumulative_min_out`: Slippage auf letztes amount_out
   - **Multi-Hop-Plan:** `build_best_hops2_plan_exact_in` liefert `min_out = expected_out * (10_000 - slippage_bps) / 10_000`
+  - **Best Quote Selection:** `best_quote_exact_in` liefert den Quote mit höchstem amount_out unter allen DEXs
 
 ### A.6 Arbitrage Profit Filter
 - **Datei:** `tests/invariants_arbitrage_profit.rs`
