@@ -11,16 +11,40 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-    - name: Clippy
-      run: cargo clippy --all-targets -- -D warnings
-    - name: Format check
-      run: cargo fmt --all -- --check
+      - name: Checkout ironcrab-eval
+        uses: actions/checkout@v4
+        with:
+          path: ironcrab-eval
+
+      - name: Checkout Iron_crab
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Iron_crab
+          path: Iron_crab
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+        working-directory: ironcrab-eval
+
+      - name: Check
+        run: cargo check --verbose
+        working-directory: ironcrab-eval
+
+      - name: Build
+        run: cargo build --verbose
+        working-directory: ironcrab-eval
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: ironcrab-eval
+
+      - name: Run tests
+        run: cargo test --verbose
+        working-directory: ironcrab-eval
