@@ -70,6 +70,11 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** Enthält der Error-String "6005" oder "0x1775" → true; sonst false.
 - **Kontext:** Voraussetzung für 6005-Retry in Liquidation (PumpFun → PumpSwap AMM).
 
+### A.9 Raydium Slippage (DoD §H)
+- **Datei:** `tests/invariants_raydium_slippage.rs`
+- **Invariante:** `Raydium::apply_slippage_min_out(amount_out, slippage_bps)` = amount_out * (10_000 - slippage_bps) / 10_000
+- **Randfälle:** slippage_bps = 0 → unverändert; slippage_bps >= 10_000 → 0
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)

@@ -32,6 +32,7 @@
 | `invariants_router_slippage.rs` | ✅ | ✅ | cumulative_min_out + Multi-Hop min_out + Best Quote Selection |
 | `invariants_dex_connector.rs` | ✅ | ✅ | DEX Connector Contracts (5 Tests) |
 | `invariants_arbitrage_profit.rs` | ✅ | ✅ | Arbitrage Profit-Filter |
+| `invariants_raydium_slippage.rs` | ✅ | ✅ | Raydium Slippage (DoD §H) |
 
 ---
 
@@ -85,7 +86,7 @@
 | `arbitrage_cycle_generic.rs` | `enumerate_4hop_cycle` | ✅ | ⚠️ | N-Hop-Enumeration; eher Unit |
 | `execution_orca_builder.rs` | `test_orca_build_swap_ix_*` | ✅ | ⚠️ | DoD §H Instruction-Gültigkeit; Build-IX-Validität |
 | `execution_pumpfun_builder.rs` | `test_pumpfun_build_*` | ✅ | ⚠️ | DoD §H Instruction-Gültigkeit |
-| `raydium_quote.rs` | `slippage_min_out`, `slippage_bounds` | ✅ | ⚠️ | Slippage-Berechnung; DoD §H |
+| `raydium_quote.rs` | `slippage_min_out`, `slippage_bounds` | ✅ | ✅ | Migriert → invariants_raydium_slippage.rs |
 | `compute_budget_estimator.rs` | `single_swap_estimate_in_range`, `large_notional_*` | ✅ | ⚠️ | CU-Schätzung; eher Config/Policy |
 | `hot_reload_smoke_test.rs` | ConfigUpdate-Tests | ✅ | ⚠️ | DoD §I Runtime-Config; Schema-Konsistenz |
 
@@ -139,7 +140,7 @@
 | IPC Schema (erweitert) | `ipc_schema_roundtrip.rs` | `tests/ipc_schema_spec.rs` (Merge mit `ipc_schema_serde.rs`) |
 | Golden Replay (Blackbox-Variante) | `golden_replay_test.rs` | `tests/golden_replay_blackbox.rs` (neu, über API/NATS) |
 
-**Bereits in eval:** `invariants_quote_monotonic`, `invariants_lock_manager`, `ipc_schema_serde` (14 Tests, STORAGE_CONVENTIONS §4, DoD §B/E), `pump_amm_geyser_first`, `invariants_6005_detection`
+**Bereits in eval:** `invariants_quote_monotonic`, `invariants_lock_manager`, `ipc_schema_serde` (14 Tests, STORAGE_CONVENTIONS §4, DoD §B/E), `pump_amm_geyser_first`, `invariants_6005_detection`, `invariants_raydium_slippage`
 
 ---
 
