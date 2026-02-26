@@ -32,8 +32,8 @@ fn setup_cache_with_pump_amm() -> (SharedLivePoolCache, Pubkey, Pubkey) {
         quote_mint,
         pool_base_token_account: Pubkey::new_from_array([3u8; 32]),
         pool_quote_token_account: Pubkey::new_from_array([4u8; 32]),
-        base_reserve: Some(1_000_000_000),  // 1B tokens
-        quote_reserve: Some(100_000_000),   // 0.1 SOL (lamports)
+        base_reserve: Some(1_000_000_000), // 1B tokens
+        quote_reserve: Some(100_000_000),  // 0.1 SOL (lamports)
         pool_accounts: (0..14).map(|_| Pubkey::new_unique()).collect(),
         creator: None,
     });
@@ -49,7 +49,10 @@ fn quote_from_cache_no_rpc() {
     let amount_in = 10_000_000; // 0.01 SOL
 
     let amount_out = quote_output_amount(&state, amount_in, &sol_mint());
-    assert!(amount_out.is_ok(), "quote_output_amount sollte Some liefern");
+    assert!(
+        amount_out.is_ok(),
+        "quote_output_amount sollte Some liefern"
+    );
     let out = amount_out.unwrap();
     assert!(out > 0, "amount_out sollte positiv sein");
 }
@@ -58,9 +61,15 @@ fn quote_from_cache_no_rpc() {
 fn pool_accounts_from_cache() {
     let (cache, _pool_market, base_mint) = setup_cache_with_pump_amm();
     let result = cache.get_pump_amm_pool_accounts_by_base_mint(&base_mint);
-    assert!(result.is_some(), "pool_accounts sollte bei Cache-Hit geliefert werden");
+    assert!(
+        result.is_some(),
+        "pool_accounts sollte bei Cache-Hit geliefert werden"
+    );
     let accounts = result.unwrap();
-    assert!(accounts.len() >= 12, "PumpAmm braucht mindestens 12 pool_accounts");
+    assert!(
+        accounts.len() >= 12,
+        "PumpAmm braucht mindestens 12 pool_accounts"
+    );
 }
 
 #[test]
@@ -173,11 +182,8 @@ async fn dex_pool_accounts_from_cache_no_rpc() {
     ];
     assert_eq!(pool_accounts.len(), 14);
 
-    let cache = make_pump_amm_cache_with_pool_accounts(
-        pool_market,
-        base_mint,
-        pool_accounts.clone(),
-    );
+    let cache =
+        make_pump_amm_cache_with_pool_accounts(pool_market, base_mint, pool_accounts.clone());
     let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
     let dex = PumpFunAmmDex::new_with_cache(rpc, cache);
 

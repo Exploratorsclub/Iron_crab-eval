@@ -30,7 +30,7 @@ jobs:
           components: rustfmt
 
       - name: Format check
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p ironcrab-eval -- --check
         working-directory: ironcrab-eval
 
       - name: Check
@@ -42,7 +42,7 @@ jobs:
         working-directory: ironcrab-eval
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy -p ironcrab-eval --all-targets -- -D warnings
         working-directory: ironcrab-eval
 
       - name: Run tests

@@ -180,7 +180,11 @@ fn trade_intent_execution_min_out_roundtrip() {
 
     let serialized = serde_json::to_string(&parsed).unwrap();
     let roundtrip: TradeIntent = serde_json::from_str(&serialized).unwrap();
-    let min_out_2 = roundtrip.execution.as_ref().and_then(|e| e.min_out.as_ref()).unwrap();
+    let min_out_2 = roundtrip
+        .execution
+        .as_ref()
+        .and_then(|e| e.min_out.as_ref())
+        .unwrap();
     assert_eq!(min_out_2.raw, 42);
     assert_eq!(min_out_2.decimals, 9);
 }

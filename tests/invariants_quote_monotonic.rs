@@ -31,6 +31,12 @@ fn quote_monotonic() {
     let out_2 = quote_output_amount(&state, 10_000_000, &quote_mint).unwrap();
     let out_3 = quote_output_amount(&state, 50_000_000, &quote_mint).unwrap();
 
-    assert!(out_2 >= out_1, "größeres amount_in muss mindestens gleiches amount_out liefern");
-    assert!(out_3 >= out_2, "größeres amount_in muss mindestens gleiches amount_out liefern");
+    assert!(
+        out_2 >= out_1,
+        "größeres amount_in muss mindestens gleiches amount_out liefern"
+    );
+    assert!(
+        out_3 >= out_2,
+        "größeres amount_in muss mindestens gleiches amount_out liefern"
+    );
 }

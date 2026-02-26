@@ -16,7 +16,9 @@ fn detects_6005_hex() {
 
 #[test]
 fn detects_instruction_error_custom_6005() {
-    assert!(is_6005_bonding_curve_complete(&"InstructionError(1, Custom(6005))"));
+    assert!(is_6005_bonding_curve_complete(
+        &"InstructionError(1, Custom(6005))"
+    ));
 }
 
 #[test]
@@ -26,7 +28,9 @@ fn detects_custom_6005() {
 
 #[test]
 fn detects_simulation_failed_with_6005() {
-    assert!(is_6005_bonding_curve_complete(&"Simulation failed: InstructionError(1, Custom(6005))"));
+    assert!(is_6005_bonding_curve_complete(
+        &"Simulation failed: InstructionError(1, Custom(6005))"
+    ));
 }
 
 #[test]
