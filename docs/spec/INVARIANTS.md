@@ -42,7 +42,9 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 
 ### A.5 Router Slippage
 - **Datei:** `tests/invariants_router_slippage.rs`
-- **Invariante:** `Router::cumulative_min_out(quotes, slippage_bps)` wendet Slippage auf das **letzte** amount_out an
+- **Invarianten:**
+  - `cumulative_min_out`: Slippage auf letztes amount_out
+  - **Multi-Hop-Plan:** `build_best_hops2_plan_exact_in` liefert `min_out = expected_out * (10_000 - slippage_bps) / 10_000`
 
 ### A.6 Arbitrage Profit Filter
 - **Datei:** `tests/invariants_arbitrage_profit.rs`
