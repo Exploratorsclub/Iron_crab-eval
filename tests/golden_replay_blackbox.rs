@@ -11,7 +11,9 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Pfad zu Iron_crab (Geschwister-Ordner von ironcrab-eval)
+/// Pfad zu Iron_crab (Geschwister-Ordner von ironcrab-eval).
+/// Erfordert Geschwister-Layout: parent/ironcrab-eval + parent/Iron_crab.
+/// Role Separation: Eval darf nie als Unterordner im Impl-Repo liegen.
 fn iron_crab_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
