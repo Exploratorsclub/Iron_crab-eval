@@ -54,8 +54,20 @@ async fn multi_hop_plan_min_out_applies_slippage_on_final_output() {
     let mint_b = Pubkey::new_from_array([2u8; 32]);
     let mint_c = Pubkey::new_from_array([3u8; 32]);
 
-    orca0.insert_mock_pool(mint_a, mint_b, 500_000_000_000u128, 1_000_000_000_000u128, 30);
-    orca1.insert_mock_pool(mint_b, mint_c, 1_000_000_000_000u128, 1_500_000_000_000u128, 30);
+    orca0.insert_mock_pool(
+        mint_a,
+        mint_b,
+        500_000_000_000u128,
+        1_000_000_000_000u128,
+        30,
+    );
+    orca1.insert_mock_pool(
+        mint_b,
+        mint_c,
+        1_000_000_000_000u128,
+        1_500_000_000_000u128,
+        30,
+    );
 
     let auth = Pubkey::new_unique();
     for dex in [&orca0, &orca1] {
@@ -65,7 +77,10 @@ async fn multi_hop_plan_min_out_applies_slippage_on_final_output() {
         dex.set_user_token_account(mint_c, Pubkey::new_unique());
     }
 
-    let router = Router::new(vec![orca0.clone() as Arc<dyn Dex>, orca1.clone() as Arc<dyn Dex>]);
+    let router = Router::new(vec![
+        orca0.clone() as Arc<dyn Dex>,
+        orca1.clone() as Arc<dyn Dex>,
+    ]);
 
     let amount_in: u64 = 50_000;
     let slippage_bps: u32 = 200; // 2%
@@ -82,7 +97,8 @@ async fn multi_hop_plan_min_out_applies_slippage_on_final_output() {
 
     let plan = plan.expect("expected a multi-hop plan for A->B->C");
 
-    let expected_min = (plan.expected_out as u128 * (10_000 - slippage_bps) as u128 / 10_000) as u64;
+    let expected_min =
+        (plan.expected_out as u128 * (10_000 - slippage_bps) as u128 / 10_000) as u64;
     assert_eq!(
         plan.min_out, expected_min,
         "min_out must apply slippage to final output"
@@ -101,23 +117,14 @@ async fn best_quote_selects_highest_amount_out() {
     let mint_b = Pubkey::new_from_array([6u8; 32]);
 
     // Orca0: 1:2 ratio → niedrigeres amount_out
-    orca0.insert_mock_pool(
-        mint_a,
-        mint_b,
-        1_000_000_000u128,
-        2_000_000_000u128,
-        30,
-    );
+    orca0.insert_mock_pool(mint_a, mint_b, 1_000_000_000u128, 2_000_000_000u128, 30);
     // Orca1: 1:6 ratio → höheres amount_out (besseres Verhältnis)
-    orca1.insert_mock_pool(
-        mint_a,
-        mint_b,
-        1_000_000_000u128,
-        6_000_000_000u128,
-        30,
-    );
+    orca1.insert_mock_pool(mint_a, mint_b, 1_000_000_000u128, 6_000_000_000u128, 30);
 
-    let router = Router::new(vec![orca0.clone() as Arc<dyn Dex>, orca1.clone() as Arc<dyn Dex>]);
+    let router = Router::new(vec![
+        orca0.clone() as Arc<dyn Dex>,
+        orca1.clone() as Arc<dyn Dex>,
+    ]);
 
     let amount_in: u64 = 10_000;
 

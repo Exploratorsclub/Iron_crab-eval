@@ -22,3 +22,10 @@ alwaysApply: true
 ## Abhängigkeit
 - `Iron_crab` muss als Geschwister-Ordner vorhanden sein: `../Iron_crab`
 - `cargo test` baut gegen die lokale Iron_crab-Lib
+
+## CI-Actions
+- Änderungen in **diesem Repo** (ironcrab-eval) gelten erst als fertig, wenn alle CI-Actions lokal erfolgreich durchgelaufen sind:
+  - `cargo fmt` (bzw. `cargo fmt --check`)
+  - `cargo check`
+  - `cargo clippy -p ironcrab-eval --all-targets -- -D warnings`
+  - `cargo test`
