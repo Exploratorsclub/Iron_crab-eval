@@ -75,6 +75,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Invariante:** `Raydium::apply_slippage_min_out(amount_out, slippage_bps)` = amount_out * (10_000 - slippage_bps) / 10_000
 - **Randfälle:** slippage_bps = 0 → unverändert; slippage_bps >= 10_000 → 0
 
+### A.10 Replay Determinism
+- **Datei:** `tests/golden_replay_blackbox.rs`
+- **Invariante:** Dieselbe Intent-Sequenz erzeugt bit-identische Decision-Streams.
+- **Formal:** Replay(intents) → decisions; Replay(intents) → decisions'; decisions == decisions'
+- **Kontext:** Spawnt execution-engine mit `--replay`; vergleicht gegen Fixtures (rejected_trade, sim_failed).
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)

@@ -2312,6 +2312,7 @@ dependencies = [
  "anyhow",
  "ironcrab",
  "rust_decimal",
+ "serde",
  "serde_json",
  "solana-sdk",
  "tempfile",

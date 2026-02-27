@@ -33,6 +33,7 @@
 | `invariants_dex_connector.rs` | ✅ | ✅ | DEX Connector Contracts (5 Tests) |
 | `invariants_arbitrage_profit.rs` | ✅ | ✅ | Arbitrage Profit-Filter |
 | `invariants_raydium_slippage.rs` | ✅ | ✅ | Raydium Slippage (DoD §H) |
+| `golden_replay_blackbox.rs` | ✅ | ✅ | Replay Determinism (execution-engine --replay) |
 
 ---
 
@@ -64,13 +65,11 @@
 | Datei | Tests | Blackbox? | Spec-Invariante? | Anmerkung |
 |-------|-------|-----------|-----------------|-----------|
 | `ipc_schema_roundtrip.rs` | Alle Schema-Tests | ✅ | ✅ | Migriert → ipc_schema_serde.rs |
-| `golden_replay_test.rs` | `golden_replay_*` | ❌ | ✅ | Nutzt `simulate_decision()` – **nicht** echte Execution-Engine API. Spec: DoD §G Replay-Determinismus. |
+| `golden_replay_test.rs` | `golden_replay_*` | ✅ | ✅ | Migriert → golden_replay_blackbox.rs (Subprocess execution-engine --replay) |
 
 **Migrationsplan (Priorität 2):**
 - **ipc_schema_roundtrip**: Migriert – Schema-Roundtrip-Tests in `tests/ipc_schema_serde.rs` (Spec-getrieben neu implementiert, STORAGE_CONVENTIONS §4, DoD §B/E)
-- **golden_replay**: Invariante „deterministisches Replay“ ist Spec-konform, aber aktuell als **Unit-Test** mit Nachbau der Engine-Logik. **Eval-Variante**: Blackbox über echte execution-engine API oder über NATS-Intent → DecisionRecord-End-to-End. Das erfordert entweder:
-  - (A) Subprocess/Integration: Intent per NATS senden, Decision per JSONL/Fixture vergleichen
-  - (B) Invariante nur dokumentieren, konkreten Blackbox-Test später ergänzen
+- **golden_replay**: Migriert – Blackbox-Test in `golden_replay_blackbox.rs` spawnt execution-engine mit `--replay`, vergleicht Output gegen Fixtures
 
 ---
 
@@ -140,7 +139,7 @@
 | IPC Schema (erweitert) | `ipc_schema_roundtrip.rs` | `tests/ipc_schema_spec.rs` (Merge mit `ipc_schema_serde.rs`) |
 | Golden Replay (Blackbox-Variante) | `golden_replay_test.rs` | `tests/golden_replay_blackbox.rs` (neu, über API/NATS) |
 
-**Bereits in eval:** `invariants_quote_monotonic`, `invariants_lock_manager`, `ipc_schema_serde` (14 Tests, STORAGE_CONVENTIONS §4, DoD §B/E), `pump_amm_geyser_first`, `invariants_6005_detection`, `invariants_raydium_slippage`
+**Bereits in eval:** `invariants_quote_monotonic`, `invariants_lock_manager`, `ipc_schema_serde` (14 Tests, STORAGE_CONVENTIONS §4, DoD §B/E), `pump_amm_geyser_first`, `invariants_6005_detection`, `invariants_raydium_slippage`, `golden_replay_blackbox`
 
 ---
 
