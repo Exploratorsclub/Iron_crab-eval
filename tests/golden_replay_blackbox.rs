@@ -179,6 +179,23 @@ fn golden_replay_rejected_trade() {
     assert_decisions_match(&actual, &expected);
 }
 
+/// normal_trade_simsucc-Fixture: Intents passieren alle Checks inkl. Simulation (SIMSUCC-Früh-Exit);
+/// in Replay wird send_disabled emittiert (kein echter TX-Versand). DoD G.P1.
+#[test]
+fn golden_replay_normal_trade() {
+    let intents = intents_fixtures_dir().join("normal_trade_simsucc_intents.jsonl");
+    let expected_path = expected_fixtures_dir().join("normal_trade_simsucc_expected.jsonl");
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let output_path = tmp.path().join("replay_decisions.jsonl");
+    run_replay(&intents, &output_path).expect("replay run failed");
+
+    let actual_path = find_replay_output_file(&output_path).expect("find replay output");
+    let actual = load_decisions(&actual_path).expect("load actual");
+    let expected = load_decisions(&expected_path).expect("load expected");
+    assert_decisions_match(&actual, &expected);
+}
+
 /// sim_failed-Fixture: Intent passiert alle Checks, Simulation schlägt fehl.
 #[test]
 fn golden_replay_sim_failed() {

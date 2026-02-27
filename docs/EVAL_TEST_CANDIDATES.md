@@ -33,7 +33,7 @@
 | `invariants_dex_connector.rs` | ✅ | ✅ | DEX Connector Contracts (5 Tests) |
 | `invariants_arbitrage_profit.rs` | ✅ | ✅ | Arbitrage Profit-Filter |
 | `invariants_raydium_slippage.rs` | ✅ | ✅ | Raydium Slippage (DoD §H) |
-| `golden_replay_blackbox.rs` | ✅ | ✅ | Replay Determinism (execution-engine --replay) |
+| `golden_replay_blackbox.rs` | ✅ | ✅ | Replay Determinism (rejected_trade, sim_failed, normal_trade_simsucc). DoD G.P1 |
 
 ---
 

@@ -79,7 +79,7 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Datei:** `tests/golden_replay_blackbox.rs`
 - **Invariante:** Dieselbe Intent-Sequenz erzeugt bit-identische Decision-Streams.
 - **Formal:** Replay(intents) → decisions; Replay(intents) → decisions'; decisions == decisions'
-- **Kontext:** Spawnt execution-engine mit `--replay`; vergleicht gegen Fixtures (rejected_trade, sim_failed).
+- **Kontext:** Spawnt execution-engine mit `--replay`; vergleicht gegen Fixtures (rejected_trade, sim_failed, normal_trade_simsucc). DoD G.P1.
 
 ---
 
