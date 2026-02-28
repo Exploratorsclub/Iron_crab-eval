@@ -181,9 +181,11 @@ fn golden_replay_rejected_trade() {
 
 /// normal_trade_simsucc-Fixture: Intents passieren alle Checks inkl. Simulation (SIMSUCC-Früh-Exit);
 /// in Replay wird send_disabled emittiert (kein echter TX-Versand). DoD G.P1.
+/// Intents liegen in Eval (normal_trade_simsucc wurde später zu Iron_crab hinzugefügt; Eval-CI
+/// checkt Iron_crab main aus, wo die Datei ggf. noch fehlt – daher Eigenbesitz).
 #[test]
 fn golden_replay_normal_trade() {
-    let intents = intents_fixtures_dir().join("normal_trade_simsucc_intents.jsonl");
+    let intents = expected_fixtures_dir().join("normal_trade_simsucc_intents.jsonl");
     let expected_path = expected_fixtures_dir().join("normal_trade_simsucc_expected.jsonl");
 
     let tmp = tempfile::tempdir().expect("temp dir");
