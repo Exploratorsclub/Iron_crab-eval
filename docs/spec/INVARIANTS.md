@@ -81,6 +81,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** Replay(intents) → decisions; Replay(intents) → decisions'; decisions == decisions'
 - **Kontext:** Spawnt execution-engine mit `--replay`; vergleicht gegen Fixtures (rejected_trade, sim_failed, normal_trade_simsucc). DoD G.P1.
 
+### A.11 Pool-Matching (I-13, FIX-38)
+- **Datei:** `tests/invariants_pool_matching.rs`
+- **Invariante:** `should_apply_position_price_update(position_pool, source_pool)` gibt nur dann true zurück, wenn source_pool == position.pool oder source_pool ist None oder position.pool ist leer.
+- **Formal:** Apply iff source_pool.is_none() || position_pool.is_empty() || position_pool == source_pool
+- **Kontext:** Verhindert falsche PnL und TAKE_PROFIT bei Multi-Pool-Tokens (Bonding Curve + AMM).
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
@@ -92,24 +98,24 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
 | I-1 | **Single-Signer**: Nur execution-engine lädt Keys und signiert/sendet | Architekturbruch |
-| I-2 | **Intent-only**: market-data, momentum-bot, arb-strategy, control-plane sind **keyless** | Key-Leak-Risiko |
+| I-2 | **Intent-only**: market-data, momentum-bot, arb-strategy, control-plane sind **keyless** — erzeugen nur TradeIntent oder MarketEvents | Key-Leak-Risiko |
 | I-3 | Prozesse außer execution-engine **crashen mit exit(1)** wenn Key-Env-Vars erkannt | DoD §A |
 
 ### B.2 Hot Path vs. Cold Path (I-4 bis I-8)
 
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
-| I-4 | **HOT PATH** (Discovery, Buy, Sell, Monitoring): **GEYSER-ONLY**. Keine blockierenden RPC-Calls. Latenz-Ziel unter 1s. | Latenz-Bruch |
-| I-5 | **COLD PATH** (Liquidation, Manual Actions, Bootstrap): RPC erlaubt. Safety vor Speed. | — |
-| I-6 | **Nie** RPC aus Cold Paths entfernen um zu "optimieren" | Safety-Bruch |
-| I-7 | **Nie** RPC in Hot Paths ohne explizite Freigabe | Architekturverletzung |
-| I-8 | Bei RPC-Refactoring: **immer** prüfen ob Hot oder Cold Path betroffen. | — |
+| I-4 | **HOT PATH** (Discovery, Buy, Sell, Monitoring): **GEYSER-ONLY**. Keine blockierenden RPC-Calls. Latenz-Ziel unter 1s Discovery bis TX on-chain. | Latenz-Bruch |
+| I-5 | **COLD PATH** (Liquidation, Manual Actions, Bootstrap): RPC erlaubt. Safety und correctness vor Speed. getTokenAccountsByOwner, getMultipleAccounts für autoritativen On-Chain-State. | — |
+| I-6 | **Nie** RPC aus Cold Paths entfernen um zu "optimieren" — bricht safety-kritische Flows. | Safety-Bruch |
+| I-7 | **Nie** RPC in Hot Paths ohne explizite Freigabe — bricht Latenz-Anforderungen. | Architekturverletzung |
+| I-8 | Bei RPC-Refactoring: **immer** prüfen ob Hot oder Cold Path betroffen. Änderungen die beide Pfade berühren = explizite Freigabe nötig. | — |
 
 ### B.3 Execution und Simulation (I-9 bis I-12)
 
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
-| I-9 | **Simulate-gated**: Wenn Simulation fehlschlägt — **nie senden** | Kapitalverlust-Risiko |
+| I-9 | **Simulate-gated**: Wenn Simulation fehlschlägt — **nie senden** (besonders Arbitrage). | Kapitalverlust-Risiko |
 | I-10 | Einziger Pipeline-Pfad: Intent → Arbitration → Plan → Simulate → (Send) → Confirm → Accounting | Undefiniertes Verhalten |
 | I-11 | Jeder Intent endet in **genau einem** Outcome: Rejected, Expired, SimFailed, Sent, Confirmed, FailedConfirmed | DoD §C |
 | I-12 | **Decision Record** pro Intent — Inputs, Checks, Outcome. Keine stille Ablehnung. | Forensik-Unmöglich |
@@ -118,18 +124,18 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
-| I-13 | **Pool-Matching**: Position-Preis-Updates nur wenn source_pool == position.pool | FIX-38 |
-| I-14 | **tokens_per_sol** Konvention: LOWER = token wertvoller. pnl_pct = (entry/current - 1)*100. | Invertierte Exit-Signale |
-| I-15 | **Amounts explizit**: Jede Zahl hat raw vs ui und decimals. | Falsche Slippage/Quotes |
+| I-13 | **Pool-Matching**: Position-Preis-Updates (Trade, PoolCacheUpdate) nur anwenden wenn source_pool == position.pool. Bei Multi-Pool-Tokens sonst falsche PnL und TAKE_PROFIT bei Verlust. | FIX-38 |
+| I-14 | **tokens_per_sol** Konvention: LOWER = token wertvoller. pnl_pct = (entry/current - 1)*100. highest_price = niedrigster tps (bester Preis für Holder). | Invertierte Exit-Signale |
+| I-15 | **Amounts explizit**: Jede Zahl hat raw vs ui und decimals. Keine impliziten Konventionen. | Falsche Slippage/Quotes |
 | I-16 | **Geyser/LivePoolCache** ist autoritativ im Hot Path. RPC/WS nur Fallback (Cold Path). | Latenz + Cache-Inkonsistenz |
 
 ### B.5 Arbitrage und MEV (I-17 bis I-19)
 
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
-| I-17 | **Typ A (Strategy Arbitrage)**: marktgetrieben, erzeugt nur TradeIntent | — |
-| I-18 | **Typ B (Execution MEV)**: reaktiv, existiert nur relativ zu Parent-Tx oder Engine-State | — |
-| I-19 | **Atomic Arbitrage**: Cross-DEX Arb atomar (Bundle) oder verworfen | Partial-Loss |
+| I-17 | **Typ A (Strategy Arbitrage)**: marktgetrieben, erzeugt nur TradeIntent, keine Parent-Tx vorausgesetzt. | — |
+| I-18 | **Typ B (Execution MEV)**: reaktiv, existiert nur relativ zu konkreter Parent-Tx oder Engine-State (z. B. eigene Pending-Tx, Bundle, observed Tx). Kein dauerhaftes Market-Scanning. | — |
+| I-19 | **Atomic Arbitrage**: Cross-DEX Arb atomar (Bundle) oder verworfen. Keine Teilfills ohne definiertes Recovery. | Partial-Loss |
 
 ### B.6 Locks und Kapital (I-20 bis I-22)
 
@@ -139,12 +145,14 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | I-21 | **Resource Locks**: Accounts/Pools/ATAs die Konflikte erzeugen werden gelockt. | Race Conditions |
 | I-22 | **Idempotency**: Engine vermeidet doppelte Verarbeitung (Intent-ID, Tx-Signature, in-flight Registry). | Doppel-Trades |
 
-### B.7 NATS und Topics (I-23 bis I-24)
+### B.7 NATS und Topics (I-23 bis I-24b)
 
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
-| I-23 | Keine neuen ad-hoc NATS Topics. An versioned Topics halten. | Topic-Chaos |
-| I-24 | Topics: ironcrab.v1.market_events, ironcrab.v1.trade_intents, ironcrab.v1.execution_results, ironcrab.v1.decision_records | — |
+| I-23 | Keine neuen ad-hoc NATS Topics. An versioned Topics halten oder klar dokumentieren. | Topic-Chaos |
+| I-24 | Topics: ironcrab.v1.market_events, ironcrab.v1.trade_intents, ironcrab.v1.execution_results, ironcrab.v1.decision_records (siehe src/nats/topics.rs). | — |
+| I-24a | **JetStream = SSOT für Bot-Zustand**: Wallet-Balances, Positionen, Pool-Cache, Config gehören in JetStream (persistent). Konsumenten bootstrappen und holen Live-Updates von dort. | Zustands-Drift |
+| I-24b | **Core NATS = Market Events**: Chain-Daten (Trades, Blocks, Preise) als Echtzeit-Events. Kein Bot-Zustand über Core NATS — Datenflut zu hoch, keine Persistenz. | — |
 
 ### B.8 Entwicklungs-Workflow (I-25 bis I-27)
 
@@ -197,5 +205,5 @@ Aktuell wird nicht auf finalized gewartet; macht aber Sinn zur Vermeidung von Re
 ## F. Querbezug
 
 - DoD §H (Connector Contract Tests) verweist auf A.3
-- Iron_crab/docs/INVARIANTS.md ist die Quelle für B.1–B.8
+- Iron_crab/docs/INVARIANTS.md ist die Quelle für B.1–B.8 (I-1 bis I-27 inkl. I-24a, I-24b)
 - Invarianten selbst stehen ausschließlich in diesem Dokument
