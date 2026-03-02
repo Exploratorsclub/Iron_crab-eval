@@ -46,16 +46,13 @@ Diese Empfehlungen wurden aus der Abgleichung von ARCHITECTURE_AUDIT.md, INVARIA
 
 ---
 
-### Priorität 3: Hot-Path-RPC-Freiheit (I-4, I-7)
+### Priorität 3: Hot-Path-RPC-Freiheit (I-4, I-7) — ERLEDIGT
 
-**Kontext:** ARCHITECTURE_AUDIT – `allow_rpc_on_miss` ist implementiert: Hot Path lehnt bei Cache-Miss ab. Offen bleiben: Orca Tick-Arrays, Raydium Serum-Market.
+**Invariante:** DEX-Connectors liefern bei Cache-Miss None/Err ohne RPC (Hot Path).
 
-**Test-Idee (Invariante):**
-- DEX-Connectors rufen bei `allow_rpc_on_miss = false` bei Cache-Miss **keinen** RPC auf und geben stattdessen `Err` zurück.
+**Test-Ansatz:** Dummy-RPC-URL (`http://127.0.0.1:0`). Bei Cache-Miss wird vor RPC-Fallback abgebrochen → keine Netzwerk-Anfrage.
 
-**Hinweis:** Schwer ohne RPC-Mock als Blackbox testbar. Möglicherweise als Unit-Test im Impl-Repo oder mit injizierbarem RPC-Client in eval.
-
-**Zieldatei:** `tests/invariants_hot_path_no_rpc.rs` (falls über API testbar)
+**Zieldatei:** `tests/invariants_hot_path_no_rpc.rs`
 
 ---
 
@@ -85,7 +82,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | ID | Invariante | Status |
 |----|------------|--------|
 | I-13 | Pool-Matching (FIX-38) | ✅ Eval-getestet (`invariants_pool_matching.rs`) |
-| I-4 / I-7 | Hot Path RPC-Freiheit | ⚠️ Kein Test – siehe Priorität 3 |
+| I-4 / I-7 | Hot Path RPC-Freiheit | ✅ Eval-getestet (`invariants_hot_path_no_rpc.rs`) |
 | I-14 | tokens_per_sol Konvention | Leitlinie, kein Eval-Test |
 
 ---
@@ -96,7 +93,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 |---|------|-----------|-----------|--------|
 | 1 | Pool-Matching (I-13) | P1 | `invariants_pool_matching.rs` | erledigt |
 | 2 | Liquidation 6005-Retry Flow | P2 | `invariants_liquidation_flow.rs` | offen |
-| 3 | Hot-Path RPC-Freiheit | P3 | `invariants_hot_path_no_rpc.rs` | offen |
+| 3 | Hot-Path RPC-Freiheit | P3 | `invariants_hot_path_no_rpc.rs` | erledigt |
 | 4 | Router hops2 + best_quote | optional | `invariants_router_slippage.rs` | offen |
 
 ---

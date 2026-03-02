@@ -87,6 +87,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** Apply iff source_pool.is_none() || position_pool.is_empty() || position_pool == source_pool
 - **Kontext:** Verhindert falsche PnL und TAKE_PROFIT bei Multi-Pool-Tokens (Bonding Curve + AMM).
 
+### A.12 Hot-Path RPC-Freiheit (I-4, I-7)
+- **Datei:** `tests/invariants_hot_path_no_rpc.rs`
+- **Invariante:** DEX-Connectors liefern bei Cache-Miss None/Err ohne RPC (Hot Path).
+- **Getestet:** PumpFunAmmDex (quote, pool_accounts), Raydium, RaydiumCpmm, MeteoraDlmm (allow_rpc_on_miss=false). Orca (live_pool_cache gesetzt → bei Vault-Miss statische Reserves, kein RPC).
+- **Kontext:** Hot Path (Arb, Momentum) darf keine blockierenden RPC-Calls ausführen.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
