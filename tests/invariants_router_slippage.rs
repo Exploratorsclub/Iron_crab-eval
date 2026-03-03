@@ -5,6 +5,7 @@
 //! - Best Quote Selection: best_quote_exact_in liefert den Quote mit höchstem amount_out unter allen DEXs
 
 use ironcrab::solana::dex::orca::Orca;
+use ironcrab::solana::dex::raydium::Raydium;
 use ironcrab::solana::dex::router::Router;
 use ironcrab::solana::dex::Dex;
 use ironcrab::solana::dex::Quote;
@@ -97,6 +98,13 @@ async fn multi_hop_plan_min_out_applies_slippage_on_final_output() {
 
     let plan = plan.expect("expected a multi-hop plan for A->B->C");
 
+    assert_eq!(plan.hops.len(), 2, "expected two-hop plan");
+    assert_eq!(
+        plan.ixs.len(),
+        2,
+        "should build two instructions (one per hop)"
+    );
+
     let expected_min =
         (plan.expected_out as u128 * (10_000 - slippage_bps) as u128 / 10_000) as u64;
     assert_eq!(
@@ -166,4 +174,33 @@ async fn best_quote_selects_highest_amount_out() {
         best.quote.amount_out, out1,
         "Router must return the quote with highest amount_out"
     );
+}
+
+/// INVARIANTS.md A.5: Best Quote – Wenn nur ein DEX ein Quote liefert, wählt der Router dieses.
+/// Raydium (ohne Pools) + Orca (mit Mock-Pool) → Orca (dex_index 1) gewinnt.
+#[tokio::test]
+async fn router_selects_orca_when_raydium_has_no_pool() {
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let raydium = Arc::new(Raydium::new(rpc.clone()));
+    let orca = Arc::new(Orca::new(rpc.clone()));
+
+    let base = Pubkey::new_from_array([3u8; 32]);
+    let quote = Pubkey::new_from_array([4u8; 32]);
+    orca.insert_mock_pool(base, quote, 1_000_000_000u128, 2_000_000_000u128, 30);
+
+    let router = Router::new(vec![
+        raydium.clone() as Arc<dyn Dex>,
+        orca.clone() as Arc<dyn Dex>,
+    ]);
+
+    let amount_in: u64 = 10_000;
+    let best = router
+        .best_quote_exact_in(&base.to_string(), &quote.to_string(), amount_in)
+        .await
+        .expect("best_quote_exact_in should not fail");
+
+    assert!(best.is_some(), "expected a quote from Orca");
+    let rq = best.unwrap();
+    assert_eq!(rq.dex_index, 1, "Orca (index 1) should win with sole pool");
+    assert!(rq.quote.amount_out > 0);
 }

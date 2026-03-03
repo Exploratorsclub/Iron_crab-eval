@@ -58,8 +58,8 @@ Diese Tests wurden in EVAL_TEST_CANDIDATES als „vorerst im Impl-Repo“ markie
 
 | Kandidat | Quelle | Invariante? | Empfehlung |
 |----------|--------|-------------|------------|
-| `router_builds_hops2_plan_with_min_out` | router_hops2_plan.rs | ✅ | Nach `invariants_router_slippage.rs` migrieren |
-| `router_picks_higher_out_amount` | router_best_quote.rs | ✅ | Nach `invariants_router_slippage.rs` migrieren |
+| `router_builds_hops2_plan_with_min_out` | router_hops2_plan.rs | ✅ | Migriert (`invariants_router_slippage.rs`) |
+| `router_picks_higher_out_amount` | router_best_quote.rs | ✅ | Migriert (`invariants_router_slippage.rs`) |
 | `pruning_keeps_profitable_cycle` | arbitrage_cycle_pruning.rs | ⚠️ | Arbitrage-Engine; evtl. Invariante; eher Unit |
 | `profit_ranking_orders_cycles` | arbitrage_profit_ranking.rs | ⚠️ | Evtl. Invariante; eher Unit |
 | `aggregate_picks_higher_output` | arbitrage_edge_aggregate.rs | ⚠️ | Evtl. Invariante; eher Unit |
@@ -90,7 +90,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 1 | Pool-Matching (I-13) | P1 | `invariants_pool_matching.rs` | erledigt |
 | 2 | Liquidation 6005-Retry Flow | P2 | `invariants_liquidation_flow.rs`, `golden_replay_blackbox.rs` | erledigt |
 | 3 | Hot-Path RPC-Freiheit | P3 | `invariants_hot_path_no_rpc.rs` | erledigt |
-| 4 | Router hops2 + best_quote | optional | `invariants_router_slippage.rs` | offen |
+| 4 | Router hops2 + best_quote | optional | `invariants_router_slippage.rs` | erledigt |
 
 ---
 

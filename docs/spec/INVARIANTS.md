@@ -44,8 +44,8 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Datei:** `tests/invariants_router_slippage.rs`
 - **Invarianten:**
   - `cumulative_min_out`: Slippage auf letztes amount_out
-  - **Multi-Hop-Plan:** `build_best_hops2_plan_exact_in` liefert `min_out = expected_out * (10_000 - slippage_bps) / 10_000`
-  - **Best Quote Selection:** `best_quote_exact_in` liefert den Quote mit höchstem amount_out unter allen DEXs
+  - **Multi-Hop-Plan:** `build_best_hops2_plan_exact_in` liefert `min_out = expected_out * (10_000 - slippage_bps) / 10_000`; Plan hat 2 Hops und 2 Swap-Instructions
+  - **Best Quote Selection:** `best_quote_exact_in` liefert den Quote mit höchstem amount_out unter allen DEXs; wenn nur ein DEX ein Quote liefert, wählt der Router dieses (Raydium+Orca-Szenario)
 
 ### A.6 Arbitrage Profit Filter
 - **Datei:** `tests/invariants_arbitrage_profit.rs`
