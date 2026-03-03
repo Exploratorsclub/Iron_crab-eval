@@ -122,6 +122,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Datei:** `tests/invariants_compute_budget.rs`
 - **Invariante:** `estimate_single_swap(notional)` liefert `compute_unit_limit` in [80k, 400k] und `compute_unit_price_micro_lamports >= 1`.
 
+### A.19 tokens_per_sol (I-14)
+- **Datei:** `tests/invariants_tokens_per_sol.rs`
+- **Invariante:** LOWER tokens_per_sol = token wertvoller. pnl_pct = (entry/current - 1)*100. highest_price = niedrigster tps (bester Preis für Holder).
+- **Getestet:** pnl_pct, updated_highest_price, drawdown_from_ath_pct.
+- **Kontext:** Verhindert invertierte Exit-Signale (FIX-PNL, BUG-Pattern).
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
@@ -160,9 +166,10 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
 | I-13 | **Pool-Matching**: Position-Preis-Updates (Trade, PoolCacheUpdate) nur anwenden wenn source_pool == position.pool. Bei Multi-Pool-Tokens sonst falsche PnL und TAKE_PROFIT bei Verlust. | FIX-38 |
-| I-14 | **tokens_per_sol** Konvention: LOWER = token wertvoller. pnl_pct = (entry/current - 1)*100. highest_price = niedrigster tps (bester Preis für Holder). | Invertierte Exit-Signale |
 | I-15 | **Amounts explizit**: Jede Zahl hat raw vs ui und decimals. Keine impliziten Konventionen. | Falsche Slippage/Quotes |
 | I-16 | **Geyser/LivePoolCache** ist autoritativ im Hot Path. RPC/WS nur Fallback (Cold Path). | Latenz + Cache-Inkonsistenz |
+
+**Hinweis:** I-14 (tokens_per_sol) ist Eval-getestet in A.19 und wird hier nicht wiederholt.
 
 ### B.5 Arbitrage und MEV (I-17 bis I-19)
 
