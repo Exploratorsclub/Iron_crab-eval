@@ -213,3 +213,22 @@ fn golden_replay_sim_failed() {
     let expected = load_decisions(&expected_path).expect("load expected");
     assert_decisions_match(&actual, &expected);
 }
+
+/// liquidation_6005_retry-Fixture: Sell-Intent mit SIMFAIL6005, dex=pumpfun.
+/// Prüft Replay-Determinismus: SimFailed-Decision wird geschrieben, LockManager-Token-Seeding
+/// ermöglicht sell_token_balance-Check. (6005-Retry liefert aktuell None wegen invalid base_mint
+/// in Fixture; vollständiger 2-Decision-Flow erfordert gültige Pubkey-Strings in Iron_crab.)
+#[test]
+fn golden_replay_liquidation_6005_retry() {
+    let intents = intents_fixtures_dir().join("liquidation_6005_retry_intents.jsonl");
+    let expected_path = expected_fixtures_dir().join("liquidation_6005_retry_expected.jsonl");
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let output_path = tmp.path().join("replay_decisions.jsonl");
+    run_replay(&intents, &output_path).expect("replay run failed");
+
+    let actual_path = find_replay_output_file(&output_path).expect("find replay output");
+    let actual = load_decisions(&actual_path).expect("load actual");
+    let expected = load_decisions(&expected_path).expect("load expected");
+    assert_decisions_match(&actual, &expected);
+}

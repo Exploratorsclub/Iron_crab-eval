@@ -30,19 +30,15 @@ Diese Empfehlungen wurden aus der Abgleichung von ARCHITECTURE_AUDIT.md, INVARIA
 
 ---
 
-### Priorität 2: Liquidation-Routing / 6005-Retry
+### Priorität 2: Liquidation-Routing / 6005-Retry — ERLEDIGT
 
-**Kontext (ARCHITECTURE_AUDIT BUG A):** Bei `run_liquidation_job()` gibt es mehrere Pfade, wo Token übersprungen werden: `min_out_sol.is_none()`, Creator fehlt im Cache, `pool_accounts_v1_for_base_mint()` gibt `None`.
+**Invariante:** Nach 6005 mark_pumpfun_complete_for_mint; Liquidation Phase 2 überspringt PumpFun (complete) und nutzt PumpSwap AMM.
 
-**Implementiert:** 6005-Retry (PumpFun → PumpSwap AMM) ist implementiert. Der Gesamtflow wird aber nicht evaluiert.
+**Test-Ansatz:**
+- `invariants_liquidation_flow.rs`: mark_pumpfun_complete_for_mint, find_pump_amm_pool_by_base_mint.
+- `golden_replay_liquidation_6005_retry`: Replay-Determinismus für 6005-Fixture (Iron_crab).
 
-**Test-Idee (Blackbox):**
-- Wenn ein SELL auf PumpFun mit 6005 (BondingCurveComplete) fehlschlägt, wird ein Retry über PumpSwap AMM versucht.
-- Liquidation-Routing: Multi-Pool zuerst, PumpFun als Fallback.
-
-**Hinweis:** Aufwendiger, da der Test stark von LivePoolCache und Konfiguration abhängt. Eventuell mit Fixtures/Mock-State realisierbar.
-
-**Zieldatei:** `tests/invariants_liquidation_flow.rs` (oder Erweiterung von `golden_replay_blackbox.rs` um Liquidation-Fixture)
+**Zieldatei:** `tests/invariants_liquidation_flow.rs`, `golden_replay_blackbox.rs`
 
 ---
 
@@ -92,7 +88,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | # | Test | Priorität | Zieldatei | Status |
 |---|------|-----------|-----------|--------|
 | 1 | Pool-Matching (I-13) | P1 | `invariants_pool_matching.rs` | erledigt |
-| 2 | Liquidation 6005-Retry Flow | P2 | `invariants_liquidation_flow.rs` | offen |
+| 2 | Liquidation 6005-Retry Flow | P2 | `invariants_liquidation_flow.rs`, `golden_replay_blackbox.rs` | erledigt |
 | 3 | Hot-Path RPC-Freiheit | P3 | `invariants_hot_path_no_rpc.rs` | erledigt |
 | 4 | Router hops2 + best_quote | optional | `invariants_router_slippage.rs` | offen |
 
