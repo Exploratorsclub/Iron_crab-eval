@@ -97,7 +97,7 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Datei:** `tests/invariants_liquidation_flow.rs`
 - **Invariante:** Nach 6005 (BondingCurveComplete) wird `mark_pumpfun_complete_for_mint` aufgerufen; danach liefert `is_pumpfun_complete_for_mint` Some(true). Liquidation Phase 2 überspringt damit PumpFun und nutzt Multi-Pool (PumpSwap AMM).
 - **Getestet:** mark_pumpfun_complete_for_mint → is_pumpfun_complete_for_mint; find_pump_amm_pool_by_base_mint; get_pump_amm_pool_accounts_by_base_mint.
-- **E2E-Test:** `golden_replay_liquidation_6005_retry` prüft Replay-Determinismus für die 6005-Fixture (1 SimFailed-Decision; LockManager-Seeding, sell_token_balance-Check).
+- **E2E-Test:** `golden_replay_liquidation_6005_retry` prüft Replay-Determinismus für die 6005-Fixture (2 Decisions: SimFailed PumpFun + SimFailed Retry PumpSwap AMM; LockManager-Seeding).
 - **Kontext:** I-4, I-7; PumpFun BondingCurve migriert zu PumpSwap AMM → 6005-Retry erforderlich.
 
 ---

@@ -215,9 +215,9 @@ fn golden_replay_sim_failed() {
 }
 
 /// liquidation_6005_retry-Fixture: Sell-Intent mit SIMFAIL6005, dex=pumpfun.
-/// Prüft Replay-Determinismus: SimFailed-Decision wird geschrieben, LockManager-Token-Seeding
-/// ermöglicht sell_token_balance-Check. (6005-Retry liefert aktuell None wegen invalid base_mint
-/// in Fixture; vollständiger 2-Decision-Flow erfordert gültige Pubkey-Strings in Iron_crab.)
+/// Prüft Replay-Determinismus: 2 Decisions (1: SimFailed 6005 PumpFun, 2: SimFailed Retry
+/// PumpSwap AMM). LockManager-Seeding ermöglicht sell_token_balance; Iron_crab-Fixture nutzt
+/// gültige Pubkey-Strings für try_6005_pumpfun_retry.
 #[test]
 fn golden_replay_liquidation_6005_retry() {
     let intents = intents_fixtures_dir().join("liquidation_6005_retry_intents.jsonl");
