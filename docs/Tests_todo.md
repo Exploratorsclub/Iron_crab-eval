@@ -93,7 +93,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 4 | Router hops2 + best_quote | optional | `invariants_router_slippage.rs` | erledigt |
 | 5 | Arbitrage Engine (Edge-Agg, Ranking, Pruning, 4-Hop) | optional | `invariants_arbitrage_engine.rs` | erledigt |
 | 6 | Orca/PumpFun build_swap_ix (DoD §H) | optional | `invariants_orca_ix.rs`, `invariants_pumpfun_ix.rs` | erledigt |
-| 7 | Compute-Budget estimate_single_swap | optional | `invariants_compute_budget.rs` | erledigt |
+| 7 | Compute-Budget estimate_single_swap + large_notional | optional | `invariants_compute_budget.rs` | erledigt |
 | 8 | tokens_per_sol (I-14) | optional | `invariants_tokens_per_sol.rs` | erledigt |
 
 ---

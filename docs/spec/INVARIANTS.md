@@ -120,7 +120,9 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 
 ### A.18 Compute-Budget-Estimator
 - **Datei:** `tests/invariants_compute_budget.rs`
-- **Invariante:** `estimate_single_swap(notional)` liefert `compute_unit_limit` in [80k, 400k] und `compute_unit_price_micro_lamports >= 1`.
+- **Invarianten:**
+  - `estimate_single_swap(notional)` liefert `compute_unit_limit` in [80k, 400k] und `compute_unit_price_micro_lamports >= 1`.
+  - Bei `notional_in >= large_notional_threshold` wird `compute_unit_price_micro_lamports` mit `large_notional_multiplier` multipliziert (Default: 3x).
 
 ### A.19 tokens_per_sol (I-14)
 - **Datei:** `tests/invariants_tokens_per_sol.rs`

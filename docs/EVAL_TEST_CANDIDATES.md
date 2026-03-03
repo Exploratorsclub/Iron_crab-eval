@@ -86,7 +86,7 @@
 | `execution_orca_builder.rs` | `test_orca_build_swap_ix_*` | ✅ | ⚠️ | DoD §H Instruction-Gültigkeit; Build-IX-Validität |
 | `execution_pumpfun_builder.rs` | `test_pumpfun_build_*` | ✅ | ⚠️ | DoD §H Instruction-Gültigkeit |
 | `raydium_quote.rs` | `slippage_min_out`, `slippage_bounds` | ✅ | ✅ | Migriert → invariants_raydium_slippage.rs |
-| `compute_budget_estimator.rs` | `single_swap_estimate_in_range`, `large_notional_*` | ✅ | ⚠️ | CU-Schätzung; eher Config/Policy |
+| `compute_budget_estimator.rs` | `single_swap_estimate_in_range`, `large_notional_*` | ✅ | ✅ | Migriert (`invariants_compute_budget.rs` A.18) |
 | `hot_reload_smoke_test.rs` | ConfigUpdate-Tests | ✅ | ⚠️ | DoD §I Runtime-Config; Schema-Konsistenz |
 
 **Empfehlung:** Diese Tests bleiben vorerst im Impl-Repo. Bei Bedarf können einzelne als Invarianten in die Spec aufgenommen und in eval neu implementiert werden.
