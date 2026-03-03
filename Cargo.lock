@@ -2310,6 +2310,7 @@ name = "ironcrab-eval"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "ironcrab",
  "rust_decimal",
  "serde",

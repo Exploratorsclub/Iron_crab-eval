@@ -1,0 +1,71 @@
+//! Invariante: Orca build_swap_ix Instruction-Gültigkeit (INVARIANTS.md A.3, DoD §H)
+//!
+//! Orca::build_swap_ix liefert nicht-leere Instructions mit user signer, user ATAs writable.
+
+use ironcrab::solana::dex::orca::Orca;
+use ironcrab::solana::dex::orca_whirlpool_layout::WhirlpoolParsed;
+use ironcrab::solana::dex::Dex;
+use ironcrab::solana::rpc::SolanaRpc;
+use solana_sdk::pubkey::Pubkey;
+use std::str::FromStr;
+use std::sync::Arc;
+
+#[test]
+fn orca_build_swap_ix_valid_accounts() {
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let orca = Orca::new(rpc);
+
+    let wallet =
+        Pubkey::from_str("Ase7z1mRLps2cTNQnRHpLyQL4Q5FHwonjmZnYCTuUDZM").expect("wallet pubkey");
+    orca.set_user_authority(wallet);
+
+    let mint_a = Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
+    let mint_b = Pubkey::from_str("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").unwrap();
+
+    let user_ata_a = Pubkey::new_unique();
+    let user_ata_b = Pubkey::new_unique();
+    orca.set_user_token_account(mint_a, user_ata_a);
+    orca.set_user_token_account(mint_b, user_ata_b);
+
+    let whirlpool_id = Pubkey::new_unique();
+    let parsed = WhirlpoolParsed {
+        token_mint_a: mint_a,
+        token_mint_b: mint_b,
+        token_vault_a: Pubkey::new_unique(),
+        token_vault_b: Pubkey::new_unique(),
+        fee_rate: 300,
+        protocol_fee_rate: 0,
+        tick_spacing: 64,
+        tick_current_index: 0,
+        liquidity: 1,
+        sqrt_price: 1,
+    };
+    orca.insert_whirlpool_parsed(whirlpool_id, parsed);
+
+    let ixs = orca
+        .build_swap_ix(&mint_a.to_string(), &mint_b.to_string(), 1_000, 1)
+        .expect("build_swap_ix");
+
+    assert_eq!(ixs.len(), 1, "expected exactly one instruction");
+    let ix = &ixs[0];
+
+    assert!(
+        ix.accounts
+            .iter()
+            .any(|m| m.pubkey == wallet && m.is_signer),
+        "user authority must be signer"
+    );
+    assert!(
+        ix.accounts
+            .iter()
+            .any(|m| m.pubkey == user_ata_a && m.is_writable),
+        "user ATA A must be writable"
+    );
+    assert!(
+        ix.accounts
+            .iter()
+            .any(|m| m.pubkey == user_ata_b && m.is_writable),
+        "user ATA B must be writable"
+    );
+    assert!(!ix.data.is_empty(), "instruction data must not be empty");
+}

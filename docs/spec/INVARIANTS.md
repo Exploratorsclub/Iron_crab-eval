@@ -27,13 +27,15 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
   - Gleicher Intent-ID nicht doppelt gelockt (Capital Lock) — *I-22 Idempotency*
 
 ### A.3 DEX Connector
-- **Datei:** `tests/invariants_dex_connector.rs`
+- **Datei:** `tests/invariants_dex_connector.rs`, `tests/invariants_orca_ix.rs`, `tests/invariants_pumpfun_ix.rs`
 - **Invarianten:**
   - **Quote-Monotonie:** `amount_in1 < amount_in2` → `amount_out1 <= amount_out2`
   - **Price-Impact:** Größeres amount_in → mindestens gleicher oder höherer price_impact_bps
   - **Unknown Pair:** Kein Pool für Input/Output-Mint → `None` oder `Ok(None)`
   - **Zero Input:** amount_in = 0 → `None` oder amount_out = 0
-  - **Build IX:** `build_swap_ix_from_pool_accounts` liefert nicht-leere Instructions mit korrektem program_id
+  - **Build IX:** `build_swap_ix_from_pool_accounts` liefert nicht-leere Instructions mit korrektem program_id (PumpFunAmmDex)
+  - **Orca build_swap_ix:** user signer, user ATAs writable, data nicht leer (DoD §H)
+  - **PumpFun build_swap_ix:** 2 IXs (ATA + swap), program_id pump.fun, user bei Index 6 signer+writable (DoD §H)
 
 ### A.4 Geyser-First / Cache-Hit
 - **Datei:** `tests/pump_amm_geyser_first.rs`
@@ -99,6 +101,26 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Getestet:** mark_pumpfun_complete_for_mint → is_pumpfun_complete_for_mint; find_pump_amm_pool_by_base_mint; get_pump_amm_pool_accounts_by_base_mint.
 - **E2E-Test:** `golden_replay_liquidation_6005_retry` prüft Replay-Determinismus für die 6005-Fixture (2 Decisions: SimFailed PumpFun + SimFailed Retry PumpSwap AMM; LockManager-Seeding).
 - **Kontext:** I-4, I-7; PumpFun BondingCurve migriert zu PumpSwap AMM → 6005-Retry erforderlich.
+
+### A.14 Arbitrage Edge-Aggregation
+- **Datei:** `tests/invariants_arbitrage_engine.rs`
+- **Invariante:** `aggregate_best_edges` liefert pro Pair den Quote mit maximalem `amount_out` über alle DEX-Connectors.
+
+### A.15 Arbitrage Cycle-Ranking
+- **Datei:** `tests/invariants_arbitrage_engine.rs`
+- **Invariante:** `rank_triangular_cycles` sortiert Cycles absteigend nach Profit; höchster Profit zuerst.
+
+### A.16 Arbitrage Pruning
+- **Datei:** `tests/invariants_arbitrage_engine.rs`
+- **Invariante:** Dominance-Pruning entfernt inferiore parallele Edges, behält aber mindestens einen profitable Cycle.
+
+### A.17 Arbitrage N-Hop-Enumeration
+- **Datei:** `tests/invariants_arbitrage_engine.rs`
+- **Invariante:** `enumerate_cycles_generic` findet alle Cycles bis max_depth; für 4-Hop-Graph existiert A->B->C->D->A.
+
+### A.18 Compute-Budget-Estimator
+- **Datei:** `tests/invariants_compute_budget.rs`
+- **Invariante:** `estimate_single_swap(notional)` liefert `compute_unit_limit` in [80k, 400k] und `compute_unit_price_micro_lamports >= 1`.
 
 ---
 

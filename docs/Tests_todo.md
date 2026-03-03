@@ -60,14 +60,14 @@ Diese Tests wurden in EVAL_TEST_CANDIDATES als „vorerst im Impl-Repo“ markie
 |----------|--------|-------------|------------|
 | `router_builds_hops2_plan_with_min_out` | router_hops2_plan.rs | ✅ | Migriert (`invariants_router_slippage.rs`) |
 | `router_picks_higher_out_amount` | router_best_quote.rs | ✅ | Migriert (`invariants_router_slippage.rs`) |
-| `pruning_keeps_profitable_cycle` | arbitrage_cycle_pruning.rs | ⚠️ | Arbitrage-Engine; evtl. Invariante; eher Unit |
-| `profit_ranking_orders_cycles` | arbitrage_profit_ranking.rs | ⚠️ | Evtl. Invariante; eher Unit |
-| `aggregate_picks_higher_output` | arbitrage_edge_aggregate.rs | ⚠️ | Evtl. Invariante; eher Unit |
-| `enumerate_4hop_cycle` | arbitrage_cycle_generic.rs | ⚠️ | N-Hop-Enumeration; eher Unit |
-| `test_orca_build_swap_ix_*` | execution_orca_builder.rs | ⚠️ | DoD §H Instruction-Gültigkeit |
-| `test_pumpfun_build_*` | execution_pumpfun_builder.rs | ⚠️ | DoD §H Instruction-Gültigkeit |
-| `single_swap_estimate_in_range` | compute_budget_estimator.rs | ⚠️ | CU-Schätzung; eher Config/Policy |
-| ConfigUpdate-Tests | hot_reload_smoke_test.rs | ⚠️ | DoD §I Runtime-Config; Schema-Konsistenz |
+| `pruning_keeps_profitable_cycle` | arbitrage_cycle_pruning.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.16) |
+| `profit_ranking_orders_cycles` | arbitrage_profit_ranking.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.15) |
+| `aggregate_picks_higher_output` | arbitrage_edge_aggregate.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.14) |
+| `enumerate_4hop_cycle` | arbitrage_cycle_generic.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.17) |
+| `test_orca_build_swap_ix_*` | execution_orca_builder.rs | ✅ | Migriert (`invariants_orca_ix.rs` DoD §H) |
+| `test_pumpfun_build_*` | execution_pumpfun_builder.rs | ✅ | Migriert (`invariants_pumpfun_ix.rs` DoD §H) |
+| `single_swap_estimate_in_range` | compute_budget_estimator.rs | ✅ | Migriert (`invariants_compute_budget.rs` A.18) |
+| ConfigUpdate-Tests | hot_reload_smoke_test.rs | ⚠️ | DoD §I Runtime-Config; Schema-Konsistenz; ausgelassen |
 
 ---
 
@@ -91,6 +91,9 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 2 | Liquidation 6005-Retry Flow | P2 | `invariants_liquidation_flow.rs`, `golden_replay_blackbox.rs` | erledigt |
 | 3 | Hot-Path RPC-Freiheit | P3 | `invariants_hot_path_no_rpc.rs` | erledigt |
 | 4 | Router hops2 + best_quote | optional | `invariants_router_slippage.rs` | erledigt |
+| 5 | Arbitrage Engine (Edge-Agg, Ranking, Pruning, 4-Hop) | optional | `invariants_arbitrage_engine.rs` | erledigt |
+| 6 | Orca/PumpFun build_swap_ix (DoD §H) | optional | `invariants_orca_ix.rs`, `invariants_pumpfun_ix.rs` | erledigt |
+| 7 | Compute-Budget estimate_single_swap | optional | `invariants_compute_budget.rs` | erledigt |
 
 ---
 
