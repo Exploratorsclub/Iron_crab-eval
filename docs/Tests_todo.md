@@ -65,7 +65,7 @@ Diese Tests wurden in EVAL_TEST_CANDIDATES als „vorerst im Impl-Repo“ markie
 | `aggregate_picks_higher_output` | arbitrage_edge_aggregate.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.14) |
 | `enumerate_4hop_cycle` | arbitrage_cycle_generic.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.17) |
 | `test_orca_build_swap_ix_*` | execution_orca_builder.rs | ✅ | Migriert (`invariants_orca_ix.rs` DoD §H) |
-| `test_pumpfun_build_*` | execution_pumpfun_builder.rs | ✅ | Migriert (`invariants_pumpfun_ix.rs` DoD §H) |
+| `test_pumpfun_build_*`, `test_tx_builder_supports_pumpfun_sell_pure_derivation` | execution_pumpfun_builder.rs | ✅ | Migriert (`invariants_pumpfun_ix.rs` DoD §H + TxBuilder SELL) |
 | `single_swap_estimate_in_range` | compute_budget_estimator.rs | ✅ | Migriert (`invariants_compute_budget.rs` A.18) |
 | ConfigUpdate-Tests | hot_reload_smoke_test.rs | ⚠️ | DoD §I Runtime-Config; Schema-Konsistenz; ausgelassen |
 
@@ -95,6 +95,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 6 | Orca/PumpFun build_swap_ix (DoD §H) | optional | `invariants_orca_ix.rs`, `invariants_pumpfun_ix.rs` | erledigt |
 | 7 | Compute-Budget estimate_single_swap + large_notional | optional | `invariants_compute_budget.rs` | erledigt |
 | 8 | tokens_per_sol (I-14) | optional | `invariants_tokens_per_sol.rs` | erledigt |
+| 9 | TxBuilder PumpFun SELL | optional | `invariants_pumpfun_ix.rs` | erledigt |
 
 ---
 

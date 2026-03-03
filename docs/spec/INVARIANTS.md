@@ -36,6 +36,7 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
   - **Build IX:** `build_swap_ix_from_pool_accounts` liefert nicht-leere Instructions mit korrektem program_id (PumpFunAmmDex)
   - **Orca build_swap_ix:** user signer, user ATAs writable, data nicht leer (DoD §H)
   - **PumpFun build_swap_ix:** 2 IXs (ATA + swap), program_id pump.fun, user bei Index 6 signer+writable (DoD §H)
+  - **TxBuilder SELL:** `tx_builder::build_tx_plan` mit PumpFun SELL-Intent (creator + min_out_raw) liefert `TxPlanOutcome::Planned` mit 2 IXs (ATA + pump.fun), program_id pump.fun, User Index 6 signer+writable. Pure Derivation (kein RPC).
 
 ### A.4 Geyser-First / Cache-Hit
 - **Datei:** `tests/pump_amm_geyser_first.rs`

@@ -84,7 +84,7 @@
 | `arbitrage_edge_aggregate.rs` | `aggregate_picks_higher_output` | ✅ | ⚠️ | Evtl. Invariante; eher Unit |
 | `arbitrage_cycle_generic.rs` | `enumerate_4hop_cycle` | ✅ | ⚠️ | N-Hop-Enumeration; eher Unit |
 | `execution_orca_builder.rs` | `test_orca_build_swap_ix_*` | ✅ | ⚠️ | DoD §H Instruction-Gültigkeit; Build-IX-Validität |
-| `execution_pumpfun_builder.rs` | `test_pumpfun_build_*` | ✅ | ⚠️ | DoD §H Instruction-Gültigkeit |
+| `execution_pumpfun_builder.rs` | `test_pumpfun_build_*`, `test_tx_builder_supports_pumpfun_sell_pure_derivation` | ✅ | ⚠️ | Migriert → invariants_pumpfun_ix.rs (DoD §H + TxBuilder SELL) |
 | `raydium_quote.rs` | `slippage_min_out`, `slippage_bounds` | ✅ | ✅ | Migriert → invariants_raydium_slippage.rs |
 | `compute_budget_estimator.rs` | `single_swap_estimate_in_range`, `large_notional_*` | ✅ | ✅ | Migriert (`invariants_compute_budget.rs` A.18) |
 | `hot_reload_smoke_test.rs` | ConfigUpdate-Tests | ✅ | ⚠️ | DoD §I Runtime-Config; Schema-Konsistenz |
