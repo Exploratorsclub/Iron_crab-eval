@@ -220,19 +220,21 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 
 ---
 
-## D. Ziel-Invarianten (noch nicht erfüllt)
+## D. Ziel-Invarianten
 
 ### D.1 Position Conservation
-**Status:** Offen – Diskussionsbedarf
+**Status:** ✅ Entscheidung getroffen (2026-03-04)
 
-Streng genommen gehört Position weder in Execution noch in Momentum. War ursprünglich in Execution, wurde wegen Problemen nach Momentum verlagert. Beste Lösung noch zu finden.
+**Entscheidung:** Position bleibt vorerst in Momentum. Kein separater Positions-Ledger.
+
+Begründung: War ursprünglich in Execution, wurde wegen Problemen nach Momentum verlagert. Ein eigener Positions-Ledger würde zusätzliche Komplexität und Sync-Punkte einführen. Momentum ist aktuell die autoritative Quelle für offene Positionen; ausreichend für den Betrieb.
 
 ### D.2 Execution Finality Consistency
-**Status:** Noch nicht umgesetzt
+**Status:** Umgesetzt (2026-03-04)
 
 **Invariante:** Position darf nur aus FINALIZED executions entstehen (nicht confirmed).
 
-Aktuell wird nicht auf finalized gewartet; macht aber Sinn zur Vermeidung von Reorg/Fork-Bugs auf Solana.
+Umsetzung: `confirm_commitment` Config (default: "finalized"). Geyser TX-Subscription und RPC-Polling warten auf Finalized, um Reorg/Fork-Bugs auf Solana zu vermeiden.
 
 ---
 

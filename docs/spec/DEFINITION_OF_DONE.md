@@ -271,6 +271,8 @@ Leitlinie: **Charts/Trends über Zeit** (Latenz, Reject-Rates, PnL/ROI, Queue De
 
 ## K) Performance / Latenz (Architektur §1, §6)
 
+**Plan:** `docs/plans/plan_k_performance.md` — Umsetzungsreihenfolge, Delegation, Abnahme.
+
 ### P2 (Future Optimization)
 - [ ] **Hot path allocations**: Kritische Pfade sind allocation-bewusst (Profiling vorhanden).
   - Bedeutet: Im Trading Hot Path (Intent → Quote → TX Build → Send) keine Heap-Allocations
@@ -709,11 +711,10 @@ Der TPU Client nutzt deinen Validator nur als **Datenquelle** (Leader Schedule, 
 
 ## TODO (Phase 2): Wallet Tracking ohne RPC-Scanning (Option C)
 
-Ziel: market-data erkennt auch **manuelle Wallet-Aktionen** (Phantom/Jupiter/Transfers), ohne dass execution-engine Events der einzige Trigger sind.
+### Status (2026-03-04)
 
-- [ ] **Option C: TX-Inferenz für ATA Lifecycle**: market-data parst relevante Instruktionen (Associated Token Program create/close, idempotent create) und ruft denselben internen „track this ATA/mint“ Pfad auf wie Option B (ExecutionResult-getrieben).  
-  Abnahme: **keine periodischen Wallet-RPC-Scans**, aber trotzdem Erkennung von neu erstellten/geschlossenen ATAs und schneller Geyser-Resubscribe.
-
+- [x] **Keine periodischen Wallet-RPC-Scans**: Erfüllt. `getTokenAccountsByOwner` nur beim Startup, nicht periodisch. Cold Path (Liquidation) RPC einmalig — I-5.
+- [x] **Option C: TX-Inferenz** — Ausgelassen (keine Priorität). Keine manuellen Trades auf Bot-Wallet; frühere manuelle TXs waren Bug-Workarounds. Unnötige Komplexität.  „track this ATA/mint“ 
 ---
 
 ## Abnahme-„Stop Rule“ (gegen €100 Debugging)

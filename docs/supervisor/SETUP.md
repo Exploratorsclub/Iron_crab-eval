@@ -58,26 +58,36 @@ docker compose down
 
 ---
 
-## 3. MCP-Server (postgres-mcp-tools)
+## 3. MCP-Server (Open Brain)
 
 Die MCP-Konfiguration liegt in `Trading_bot/.cursor/mcp.json` und wird automatisch geladen, wenn der Supervisor-Workspace (`Trading_bot/`) geöffnet ist.
 
 ### Voraussetzungen
 
-- **Node.js** 18+ (`node --version`)
-- **Docker** mit laufendem Postgres (siehe oben)
+- **Python** 3.10+ (mit `pip install -e .` in `openbrain-mcp/`)
+- **Docker** mit laufendem Postgres (siehe oben, Port 5433)
+- **openbrain-mcp** installiert: `cd openbrain-mcp && pip install -e .`
 
-### Embeddings ohne API-Key
+### Tools
 
-Aktuell: `EMBEDDING_MODEL=mock` — keine API-Keys nötig. Semantische Suche ist eingeschränkt, aber Speichern/Abrufen funktioniert.
+| Tool | Zweck |
+|------|-------|
+| `add_memory` | failure_pattern, architectural_decision, invariant_evolution speichern |
+| `add_chat` | Chat-/Konversations-Einträge speichern |
+| `semantic_search` | Ähnliche Einträge finden (pgvector) |
+| `list_recent` | Letzte N Einträge nach Typ |
 
-Für bessere semantische Suche später: `EMBEDDING_MODEL=openai` + `OPENAI_API_KEY` in `mcp.json` ergänzen.
+### Embeddings
+
+Aktuell: `EMBEDDING_MODEL=mock` — keine API-Keys nötig. Semantische Suche mit Mock ist eingeschränkt (andere Vektoren pro Text). Speichern und `list_recent` funktionieren zuverlässig.
+
+Für bessere semantische Suche: `EMBEDDING_MODEL=openai` + `OPENAI_API_KEY` in `mcp.json` ergänzen.
 
 ### Test
 
 1. Cursor neu starten (nach Änderungen an mcp.json)
 2. Supervisor-Workspace öffnen
-3. Im Chat: „Welche MCP-Tools hast du?“ oder „Speichere in Open Brain: Test-Entscheidung für I-4“
+3. Im Chat: „Welche MCP-Tools hast du?“ oder „Speichere mit add_memory: memory_type=architectural_decision, content=Test-Entscheidung für I-4“
 
 ---
 
@@ -100,8 +110,10 @@ Für bessere semantische Suche später: `EMBEDDING_MODEL=openai` + `OPENAI_API_K
 |------|-------|
 | `Trading_bot/.cursor/rules/supervisor-agent.mdc` | Supervisor-Regel |
 | `Trading_bot/.cursor/mcp.json` | MCP-Konfiguration |
-| `Trading_bot/openbrain/docker-compose.yml` | Postgres-Container |
-| `Trading_bot/openbrain/init.sql` | DB-Schema |
+| `Trading_bot/openbrain/docker-compose.yml` | Postgres-Container (Port 5433) |
+| `Trading_bot/openbrain/init.sql` | DB-Schema (conversations) |
+| `Trading_bot/openbrain/migrations/02_ironcrab_schema.sql` | IronCrab-Tabellen |
+| `Trading_bot/openbrain-mcp/` | Python-MCP-Server |
 
 ---
 
@@ -157,6 +169,7 @@ Folgende Einträge hinzufügen (Präfix-Matching):
 |---------|-------|
 | `cd Iron_crab && agent -p` | Impl-Delegation |
 | `cd Iron_crab-eval && agent -p` | Eval-Delegation |
+| `cd openbrain-mcp && agent -p` | Open-Brain-Delegation (selten) |
 | `cd Iron_crab-eval && cargo test` | Tests ausführen |
 
 ### Alternative: Run Everything
@@ -171,27 +184,20 @@ Allowlist nutzt Präfix-Matching. Die gezielte Allowlist (Option A) ist sicherer
 
 ## 9. Troubleshooting
 
-### MCP-Server startet nicht
+### MCP-Server (Open Brain) startet nicht
 
-- **Node.js prüfen**: `node --version` (mind. 18)
-- **Postgres läuft**: `docker compose ps` in openbrain/
+- **Python prüfen**: `py -3 -c "import openbrain_mcp; print('OK')"`
+- **Paket installiert**: `cd openbrain-mcp && pip install -e .`
+- **Postgres läuft**: `docker compose ps` in openbrain/ (Port 5433)
 - **Cursor neu starten** nach mcp.json-Änderungen
 
-### postgres-mcp-tools: Alternative Konfiguration
+### Pfad mit Leerzeichen (z.B. "Robert Onuk")
 
-Falls `npx postgres-mcp-tools` nicht funktioniert, global installieren:
+Falls der Python-Pfad Leerzeichen enthält, nutzt `mcp.json` `C:\Windows\py.exe` statt `python.exe`. Das umgeht Pfad-Parsing-Probleme.
 
-```bash
-npm install -g postgres-mcp-tools
-```
+### semantic_search liefert keine Treffer (Mock-Embeddings)
 
-Dann in mcp.json:
-
-```json
-"command": "postgres-mcp-tools"
-```
-
-(ohne npx, ohne args)
+Mit `EMBEDDING_MODEL=mock` erzeugt jeder Text andere Vektoren; semantische Ähnlichkeit ist eingeschränkt. Nutze `list_recent` für chronologische Abfragen. Für echte semantische Suche: `EMBEDDING_MODEL=openai` + `OPENAI_API_KEY` setzen.
 
 ### Embeddings: Von Mock zu OpenAI
 
