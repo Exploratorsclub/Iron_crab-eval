@@ -42,7 +42,7 @@ fn token_balance(account_index: u8, mint: &Pubkey, amount: u64, decimals: u8) ->
 
 /// Erstellt 23 instruction_accounts für BUY (Pool-Market, User, GlobalConfig, BaseMint, QuoteMint, ...)
 fn build_buy_accounts(trader: Pubkey) -> Vec<Pubkey> {
-    let mut accounts = vec![
+    let accounts = vec![
         Pubkey::new_unique(), // pool_market [0]
         trader,               // user [1]
         Pubkey::new_unique(), // global_config [2]
@@ -73,7 +73,7 @@ fn build_buy_accounts(trader: Pubkey) -> Vec<Pubkey> {
 
 /// Erstellt 21 instruction_accounts für SELL (ohne volume accumulators)
 fn build_sell_accounts(trader: Pubkey) -> Vec<Pubkey> {
-    let mut accounts = vec![
+    let accounts = vec![
         Pubkey::new_unique(), // pool_market [0]
         trader,               // user [1]
         Pubkey::new_unique(), // global_config [2]
