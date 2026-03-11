@@ -168,6 +168,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Invariante:** build_buy_exact_sol_ix() hat bonding_curve_v2 als letztes Account (Index 16), identisch zu build_buy_ix().
 - **Formal:** ix.accounts.last().unwrap().pubkey == PDA(['bonding-curve-v2', mint], pumpfun_program). !is_signer. !is_writable.
 
+### A.27 LockManager Atomic Wallet Updates (SOL/WSOL Entkopplung)
+- **Datei:** `tests/invariants_wallet_update.rs`
+- **Invariante:** `update_native_sol_only()` aendert nur native SOL; `update_wsol_only()` aendert nur WSOL. Nach simuliertem Wrap ist `total_native_sol() + wsol_balance()` konsistent.
+- **Formal:** update_native_sol_only(X) → total_native_sol() aendert sich, wsol_balance() bleibt gleich. update_wsol_only(Y) → wsol_balance() aendert sich, total_native_sol() bleibt gleich. Wrap-Simulation: sol_before + wsol_before == sol_after + wsol_after (modulo Fees).
+- **Kontext:** KNOWN_BUG_PATTERNS #23; Non-atomic SOL/WSOL Event-Updates verursachten falsche wallet_total_sol_lamports Metrik.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
