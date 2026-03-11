@@ -131,6 +131,43 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Getestet:** pnl_pct, updated_highest_price, drawdown_from_ath_pct.
 - **Kontext:** Verhindert invertierte Exit-Signale (FIX-PNL, BUG-Pattern).
 
+### A.20 DEX Parser PumpSwap BUY/SELL (FIX: Guard-Check)
+- **Datei:** `tests/invariants_dex_parser_pumpswap.rs`
+- **Invariante:** `parse_pumpfun_amm_transaction()` parst sowohl BUY (23 Accounts) als auch SELL (21 Accounts) korrekt.
+- **Formal:** BUY-Discriminator + 23 Accounts → Some(Trade { is_buy: true }). SELL-Discriminator + 21 Accounts → Some(Trade { is_buy: false }). <21 Accounts → None.
+- **Kontext:** KNOWN_BUG_PATTERNS #14; Guard-Check war != 23, jetzt < 21.
+
+### A.21 DEX Parser Inner-Instruction Fallback (Aggregator-CPI)
+- **Datei:** `tests/invariants_dex_parser_cpi.rs`
+- **Invariante:** `parse_dex_transaction()` erkennt DEX-Trades auch wenn sie als Inner Instruction (CPI) ausgeführt werden.
+- **Formal:** Top-Level = unbekanntes Programm, Inner Instruction = bekannter DEX-Swap → Some(Trade). Top-Level = bekannter DEX → Some(Trade) (kein Fallback nötig).
+- **Kontext:** Aggregator-Trades (Jupiter, etc.) rufen DEX-Programme als CPI auf.
+
+### A.22 PumpFun BUY Account Count (Post-Cashback-Upgrade)
+- **Datei:** `tests/invariants_pumpfun_cashback.rs`
+- **Invariante:** `build_buy_ix()` liefert genau 17 Accounts. Das letzte Account (Index 16) ist bonding_curve_v2 PDA.
+- **Formal:** ix.accounts.len() == 17. ix.accounts[16].pubkey == PDA(['bonding-curve-v2', mint], pumpfun_program). ix.accounts[16].is_signer == false. ix.accounts[16].is_writable == false.
+
+### A.23 PumpFun SELL Account Count (Post-Cashback-Upgrade)
+- **Datei:** `tests/invariants_pumpfun_cashback.rs`
+- **Invariante:** `build_sell_ix(cashback=false)` liefert 15 Accounts. `build_sell_ix(cashback=true)` liefert 16 Accounts. bonding_curve_v2 ist jeweils das LETZTE Account.
+- **Formal:** Non-cashback: ix.accounts.len() == 15, ix.accounts[14] == bonding_curve_v2. Cashback: ix.accounts.len() == 16, ix.accounts[15] == bonding_curve_v2, ix.accounts[14] == user_volume_accumulator.
+
+### A.24 BondingCurveState cashback_enabled Parsing
+- **Datei:** `tests/invariants_pumpfun_cashback.rs`
+- **Invariante:** BondingCurveState::parse() liest cashback_enabled aus Byte 82.
+- **Formal:** 81-Byte data → cashback_enabled == false. 151-Byte data mit data[82]==1 → cashback_enabled == true. 151-Byte data mit data[82]==0 → cashback_enabled == false.
+
+### A.25 PumpFun Market Order BUY (buy_exact_sol_in)
+- **Datei:** `tests/invariants_pumpfun_market_order.rs`
+- **Invariante:** build_buy_exact_sol_ix() liefert genau 17 Accounts (identisch zu build_buy_ix). Instruction-Data beginnt mit Discriminator [56, 252, 116, 8, 158, 223, 205, 95]. sol_amount und min_tokens_out werden korrekt serialisiert.
+- **Formal:** ix.accounts.len() == 17. ix.data[0..8] == [56, 252, 116, 8, 158, 223, 205, 95]. u64::from_le_bytes(ix.data[8..16]) == sol_amount. u64::from_le_bytes(ix.data[16..24]) == min_tokens_out.
+
+### A.26 PumpFun Market Order bonding_curve_v2 Position
+- **Datei:** `tests/invariants_pumpfun_market_order.rs`
+- **Invariante:** build_buy_exact_sol_ix() hat bonding_curve_v2 als letztes Account (Index 16), identisch zu build_buy_ix().
+- **Formal:** ix.accounts.last().unwrap().pubkey == PDA(['bonding-curve-v2', mint], pumpfun_program). !is_signer. !is_writable.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)

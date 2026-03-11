@@ -34,6 +34,7 @@ fn setup_cache_with_pumpfun() -> (SharedLivePoolCache, Pubkey, Pubkey) {
         real_token_reserves: 1_000_000_000,
         complete: false,
         creator,
+        cashback_enabled: false,
     });
 
     cache.upsert(bonding_curve, state, 0);

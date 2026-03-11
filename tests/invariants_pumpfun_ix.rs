@@ -38,6 +38,7 @@ async fn pumpfun_build_buy_ix_valid_accounts() {
             Some(creator),
             500,
             None,
+            false,
         )
         .await
         .expect("build_swap_ix_async_with_slippage");

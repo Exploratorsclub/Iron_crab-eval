@@ -96,6 +96,10 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 7 | Compute-Budget estimate_single_swap + large_notional | optional | `invariants_compute_budget.rs` | erledigt |
 | 8 | tokens_per_sol (I-14) | optional | `invariants_tokens_per_sol.rs` | erledigt |
 | 9 | TxBuilder PumpFun SELL | optional | `invariants_pumpfun_ix.rs` | erledigt |
+| 10 | DEX Parser PumpSwap BUY/SELL (A.20) | P1 | `invariants_dex_parser_pumpswap.rs` | erledigt |
+| 11 | DEX Parser CPI Fallback (A.21) | P1 | `invariants_dex_parser_cpi.rs` | erledigt |
+| 12 | PumpFun Cashback-Upgrade (A.22-A.24) | P0 | `invariants_pumpfun_cashback.rs` | erledigt |
+| 13 | PumpFun Market Order (A.25-A.26) | P0 | `invariants_pumpfun_market_order.rs` | erledigt |
 
 ---
 
