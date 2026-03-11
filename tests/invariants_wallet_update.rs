@@ -71,8 +71,8 @@ fn simulated_unwrap_preserves_total() {
     assert_eq!(total_before, total_after, "Wallet-Wert bei Unwrap erhalten");
 }
 
-/// Test 5: update_native_sol_only mit aktiven Locks — available_sol wird direkt gesetzt,
-/// total_native_sol = available_sol + locked. Dokumentiert bestehendes Verhalten.
+/// Test 5: update_native_sol_only mit aktiven Locks — subtrahiert Locks vom On-Chain-Wert.
+/// Verifiziert: Kein Double-Counting. total_native_sol() == On-Chain-Wert nach Update.
 #[test]
 fn update_with_active_locks_no_double_count() {
     let manager = LockManager::new(2_000_000_000).with_fairness(5, 60, 30, false);
@@ -87,9 +87,18 @@ fn update_with_active_locks_no_double_count() {
     // Geyser-Update: on-chain balance unveraendert bei 2B
     manager.update_native_sol_only(2_000_000_000);
 
-    // total_native_sol = available_sol + locked = 2B + 500M
-    assert_eq!(manager.total_native_sol(), 2_500_000_000);
-    assert_eq!(manager.available_sol(), 2_000_000_000);
+    // available_sol = on_chain - locked = 2B - 500M = 1.5B (unveraendert)
+    assert_eq!(
+        manager.available_sol(),
+        1_500_000_000,
+        "available = on_chain - locked"
+    );
+    // total_native_sol = available + locked = 1.5B + 500M = 2B (korrekt, kein Double-Count)
+    assert_eq!(
+        manager.total_native_sol(),
+        2_000_000_000,
+        "total == on-chain, kein Double-Count"
+    );
 
     manager.release_locks("intent-lock");
 }
