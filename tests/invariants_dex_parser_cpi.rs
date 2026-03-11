@@ -154,7 +154,7 @@ fn cpi_trade_parsed_from_inner_instruction() {
 fn top_level_takes_priority_over_inner() {
     let trader = Pubkey::new_unique();
     let base_mint = Pubkey::new_unique();
-    let pumpfun_amm = Pubkey::from_str(PUMPFUN_AMM_PROGRAM).unwrap();
+    let _pumpfun_amm = Pubkey::from_str(PUMPFUN_AMM_PROGRAM).unwrap();
     let raydium = Pubkey::from_str(RAYDIUM_AMM_V4).unwrap();
 
     let mut buy_accounts = build_buy_accounts(trader);
