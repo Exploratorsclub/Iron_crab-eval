@@ -174,6 +174,18 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** update_native_sol_only(X) → total_native_sol() aendert sich, wsol_balance() bleibt gleich. update_wsol_only(Y) → wsol_balance() aendert sich, total_native_sol() bleibt gleich. Wrap-Simulation: sol_before + wsol_before == sol_after + wsol_after (modulo Fees).
 - **Kontext:** KNOWN_BUG_PATTERNS #23; Non-atomic SOL/WSOL Event-Updates verursachten falsche wallet_total_sol_lamports Metrik.
 
+### A.28 Open Positions Counter Konsistenz (Single Source of Truth)
+- **Datei:** `tests/invariants_open_positions.rs`
+- **Invariante:** `get_open_positions()` wird aus LockManager `count_non_zero_token_balances()` abgeleitet (nicht als separater Counter). Der Wert stimmt stets mit der Anzahl non-zero Eintraege in `available_tokens` ueberein.
+- **Formal:** `get_open_positions() == available_tokens.values().filter(|b| b > 0).count()`. Nach N BUY-Fills: count == N. Nach Sell-All: count == 0. Nach Restart-Recovery: count == tatsaechlicher Bestand.
+- **Kontext:** KNOWN_BUG_PATTERNS #5 (Ghost Positions); dual-path tracking (Execution Result + Geyser Balance) verursachte Race Conditions und Counter-Drift.
+
+### A.29 Liquidation Vollstaendigkeit (Kill-Switch SELL)
+- **Datei:** `tests/invariants_liquidation_flow.rs` (erweitert)
+- **Invariante:** Liquidation erkennt alle non-zero Token im Wallet, baut fuer jeden ein korrektes SELL-Intent und scheitert nicht an fehlenden Cache-Daten (Cold Path: RPC erlaubt). PumpFun-Token mit `cashback_enabled=true` erhalten 16-Account SELL Layout (mit `user_volume_accumulator`).
+- **Formal:** RPC-Inventory(N Token) → N Liquidation-Intents. `cashback_enabled` wird per RPC verifiziert wenn Cache-Miss. `run_liquidation_job` blockiert Main-Loop nicht (tokio::spawn).
+- **Kontext:** Liquidation scheiterte weil: (a) `cashback_enabled` auf `false` defaulted (pool_cache_sync.rs), (b) `run_liquidation_job().await` Main-Loop blockierte.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)

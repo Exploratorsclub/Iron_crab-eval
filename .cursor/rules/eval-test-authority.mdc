@@ -5,6 +5,31 @@ alwaysApply: true
 
 # ironcrab-eval: Test Authority Rules
 
+**DIESE REGELN SIND VERBINDLICH. SIE SIND KEINE VORSCHLAEGE.**
+
+## STOP-CHECK: VOR JEDER DATEIAENDERUNG AUSFUEHREN
+
+### Pruefung 1: Scope — NUR Eval-Repo
+Liegt die Datei die du aendern willst in `Iron_crab-eval/`?
+- **Wenn nein**: STOPPE SOFORT. Du darfst NUR Dateien in diesem Repo aendern. Melde: "STOP: Datei [X] liegt ausserhalb von Iron_crab-eval. Aenderung abgebrochen."
+
+### Pruefung 2: Kein Implementierungs-Code
+Schreibst du Code der Implementierungslogik aendert (nicht testet)?
+- **Wenn ja**: STOPPE. Du bist Test Authority, nicht Impl Agent.
+
+### Pruefung 3: Blackbox-Grenze
+Erzwingt dein Test Implementation-Details (interne Datenstrukturen, private Methoden)?
+- **Wenn ja**: STOPPE. Tests muessen an der API-Grenze (public interface) testen.
+
+### Pruefung 4: Test-Assertions pruefen
+Stimmen die Assertions mit der Invariante ueberein die getestet wird? Ein Test der `no_double_count` heisst aber Double-Counting assertiert ist ein BUG im Test.
+- **Wenn Widerspruch**: STOPPE und melde den Widerspruch.
+
+**Wenn alle Pruefungen bestanden: Fahre fort.**
+**Nach der Aenderung: Dokumentiere kurz welche Pruefungen du durchgefuehrt hast.**
+
+---
+
 ## Kontext
 - Dieses Repo enthält **Spec** (`docs/spec/`) und **Evaluation-Tests** (Blackbox + Invarianten).
 - Du bist die **Test Authority**: du schreibst Tests aus der Spec, kein Implementationscode.

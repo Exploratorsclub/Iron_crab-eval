@@ -39,6 +39,7 @@ async fn pumpfun_build_buy_ix_valid_accounts() {
             500,
             None,
             false,
+            false, // allow_rpc_fallback: Hot-Path-Test, keine RPC-Calls
         )
         .await
         .expect("build_swap_ix_async_with_slippage");
