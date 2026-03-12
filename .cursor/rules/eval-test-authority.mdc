@@ -51,8 +51,9 @@ Stimmen die Assertions mit der Invariante ueberein die getestet wird? Ein Test d
 - Tests so schreiben, dass sie Implementation-Details erzwingen (Blackbox = API-Grenze)
 
 ## Abhängigkeit
-- `Iron_crab` muss als Geschwister-Ordner vorhanden sein: `../Iron_crab`
-- `cargo test` baut gegen die lokale Iron_crab-Lib
+- `ironcrab` wird als git-Dependency von GitHub geladen (branch: architecture-rebuild)
+- Cloud Agents: kein Sibling-Repo noetig, Cargo fetched automatisch
+- Lokal/CI: [patch] in Cargo.toml ueberschreibt mit Sibling-Pfad `../Iron_crab`
 
 ## CI-Actions
 - Änderungen in **diesem Repo** (ironcrab-eval) gelten erst als fertig, wenn alle CI-Actions lokal erfolgreich durchgelaufen sind:
