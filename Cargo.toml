@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Sibling-Layout: Iron_crab und ironcrab-eval nebeneinander (lokal + CI)
-ironcrab = { path = "../Iron_crab" }
+# Cloud Agents: git-Dependency fuer isolierte VM-Builds
+# CI + lokal: [patch] ueberschreibt mit Sibling-Pfad (siehe CI workflows)
+ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", branch = "architecture-rebuild" }
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]

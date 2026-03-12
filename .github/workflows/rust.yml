@@ -24,6 +24,14 @@ jobs:
           repository: ${{ github.repository_owner }}/Iron_crab
           path: Iron_crab
 
+      - name: Patch git-dep to use sibling checkout
+        run: |
+          cat >> ironcrab-eval/Cargo.toml <<'EOF'
+
+          [patch."https://github.com/Exploratorsclub/Iron_crab.git"]
+          ironcrab = { path = "../Iron_crab" }
+          EOF
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
