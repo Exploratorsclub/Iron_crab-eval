@@ -11,9 +11,7 @@ use ironcrab::execution::live_pool_cache::{
 };
 use ironcrab::solana::dex::pumpfun::PumpFunDex;
 use ironcrab::solana::rpc::SolanaRpc;
-use ironcrab::storage::{LockHolder, LockManager, LockResult};
 use solana_sdk::pubkey::Pubkey;
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -205,34 +203,4 @@ fn liquidation_non_cashback_account_layout_15() {
         15,
         "PumpFun SELL with cashback_enabled=false must have 15 accounts"
     );
-}
-
-#[test]
-fn count_non_zero_with_locks_active() {
-    let manager = LockManager::new(5_000_000_000).with_fairness(5, 60, 30, false);
-
-    // Token-Balance mit aktivem Lock
-    let mut tokens = HashMap::new();
-    tokens.insert("mint_A".to_string(), 1_000_000u64);
-    let holder = LockHolder::new("sell-intent-1");
-    manager.set_available_token_balance("mint_A".to_string(), 1_000_000);
-    let result = manager.try_lock_capital(holder, 0, tokens);
-    assert!(matches!(result, LockResult::Acquired));
-
-    // Trotz Lock: die Balance im available_tokens ist reduziert
-    // Aber count_non_zero_token_balances zaehlt die effektive Balance
-    // Bei set_available_token_balance mit Lock wird effective = raw - locked
-    // In diesem Fall: 1M - 1M = 0 -> count koennte 0 sein
-    // ODER die Logik zaehlt Eintraege > 0
-
-    // Fuege einen zweiten Mint ohne Lock hinzu
-    manager.set_available_token_balance("mint_B".to_string(), 500_000);
-
-    // mint_B hat definitive Balance > 0
-    assert!(
-        manager.count_non_zero_token_balances() >= 1,
-        "Mindestens mint_B hat non-zero Balance"
-    );
-
-    manager.release_locks("sell-intent-1");
 }

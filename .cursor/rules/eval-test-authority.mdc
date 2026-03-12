@@ -17,15 +17,21 @@ Liegt die Datei die du aendern willst in `Iron_crab-eval/`?
 Schreibst du Code der Implementierungslogik aendert (nicht testet)?
 - **Wenn ja**: STOPPE. Du bist Test Authority, nicht Impl Agent.
 
-### Pruefung 3: Blackbox-Grenze
+### Pruefung 3: Repo-Isolation (Level-5-Trennung)
+Liest oder referenzierst du Dateien aus `Iron_crab/src/`?
+- **Wenn ja**: STOPPE SOFORT. Du darfst Implementierungs-Code NICHT direkt lesen. Das Lesen von Impl-Code verletzt die Level-5-Trennung und fuehrt dazu, dass Tests auf Implementation-Details zugeschnitten werden statt echte Blackbox-Tests zu sein.
+- **Erlaubt**: Die oeffentliche API von `ironcrab` (via `use ironcrab::...` in Tests) und `Iron_crab/docs/` (INVARIANTS.md, KNOWN_BUG_PATTERNS.md).
+- **Verboten**: `Iron_crab/src/`, `Iron_crab/tests/`
+
+### Pruefung 4: Blackbox-Grenze
 Erzwingt dein Test Implementation-Details (interne Datenstrukturen, private Methoden)?
 - **Wenn ja**: STOPPE. Tests muessen an der API-Grenze (public interface) testen.
 
-### Pruefung 4: Test-Assertions pruefen
+### Pruefung 5: Test-Assertions pruefen
 Stimmen die Assertions mit der Invariante ueberein die getestet wird? Ein Test der `no_double_count` heisst aber Double-Counting assertiert ist ein BUG im Test.
 - **Wenn Widerspruch**: STOPPE und melde den Widerspruch.
 
-**Wenn alle Pruefungen bestanden: Fahre fort.**
+**Wenn alle 5 Pruefungen bestanden: Fahre fort.**
 **Nach der Aenderung: Dokumentiere kurz welche Pruefungen du durchgefuehrt hast.**
 
 ---
