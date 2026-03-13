@@ -1,5 +1,7 @@
 # Plan: PumpSwap Pool Discovery & Bootstrap Fix (Bug #31, #32, #33)
 
+> Status: Der in diesem Dokument beschriebene **Eval-Test-Teil** fuer A.37-A.40 wurde verworfen. Die Analyse kann als historische Notiz nuetzlich sein, aber die daraus abgeleiteten Eval-Invarianten und Source-Scan-Tests gelten nicht als aktive Arbeitsanweisung.
+
 ## Kontext
 
 ### Performance-Messung (Server, 2026-03-13)
@@ -84,7 +86,7 @@ let find_authority_with_token_account = |candidates: Vec<Pubkey>, mint: Pubkey| 
 
 **Test (Unit):** `test_find_authority_derives_ata_without_rpc_fallback` — Verify that when ATA doesn't exist on-chain, the derived ATA address is returned (no getTokenAccountsByOwner call).
 
-**Test (Eval):** Invariante A.37: `try_parse_pool_static_from_market_account_inner` darf NICHT `getTokenAccountsByOwner` aufrufen.
+**Test (Eval):** Zurueckgezogen. Der damalige Eval-Ansatz war ein Source-Code-Scan und ist nicht mehr aktiv.
 
 ---
 
@@ -101,7 +103,7 @@ let find_authority_with_token_account = |candidates: Vec<Pubkey>, mint: Pubkey| 
 
 **Test (Integration):** Nach Trade-Parsing muss ein `PoolCacheUpdate` mit nicht-leeren `pool_accounts` in JetStream vorhanden sein. Bootstrap nach Restart muss diese pool_accounts korrekt lesen.
 
-**Test (Eval):** Invariante A.38: Wenn market-data pool_accounts per Trade-Parsing erhaelt, MUSS ein PoolCacheUpdate mit pool_accounts in JetStream publiziert werden.
+**Test (Eval):** Zurueckgezogen. Der damalige Eval-Ansatz war ein Source-Code-Scan und ist nicht mehr aktiv.
 
 ---
 
@@ -153,11 +155,11 @@ Das ist ein einmaliger Cold-Start Aufwand (~1ms pro Pool × Anzahl Pools ohne po
 | C | `src/bin/execution_engine.rs` | Liquidation Quote Timeout, Zeile 1645 und 2020 |
 | D | `src/bin/execution_engine.rs` | Nach Bootstrap, neuer Abschnitt |
 
-## Neue Invarianten
+## Ehemals vorgeschlagene Invarianten
 
 | ID | Beschreibung |
 |----|-------------|
-| A.37 | `try_parse_pool_static_from_market_account_inner` darf NICHT `getTokenAccountsByOwner` aufrufen |
-| A.38 | Bei Trade-Parsing mit pool_accounts MUSS ein PoolCacheUpdate auf JetStream publiziert werden |
-| A.39 | Liquidation-Quote-Timeout muss >= 30s sein |
-| A.40 | Nach Startup-Bootstrap muessen alle PumpSwap Pools im Cache gueltige pool_accounts haben |
+| A.37 | Zurueckgezogen - nicht als aktive Eval-Invariante uebernommen |
+| A.38 | Zurueckgezogen - nicht als aktive Eval-Invariante uebernommen |
+| A.39 | Zurueckgezogen - nicht als aktive Eval-Invariante uebernommen |
+| A.40 | Zurueckgezogen - nicht als aktive Eval-Invariante uebernommen |

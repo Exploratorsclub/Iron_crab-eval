@@ -299,21 +299,10 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Datei:** `tests/invariants_hot_path_no_rpc.rs` (erweitert)
 - **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt (auch ohne pool_accounts), muss `discover_pool_static` zuerst einen einzelnen `getAccount` Call fuer diese bekannte Adresse versuchen, bevor auf den langsamen `getProgramAccounts`-Scan zurueckgefallen wird. Der `getProgramAccounts`-Scan ist nur noch Last-Resort fuer komplett unbekannte Pools.
 
-### A.37 try_parse_pool_static_from_market_account_inner darf NICHT getTokenAccountsByOwner aufrufen
-- **Datei:** `tests/invariants_pool_discovery.rs` (neu)
-- **Invariante:** Die Funktion `try_parse_pool_static_from_market_account_inner` darf KEINE RPC-Methoden nutzen die Secondary Indexes benoetigen (`getTokenAccountsByOwner`, `getProgramAccounts`). Alle Accounts muessen per PDA-Derivation + `getAccountInfo` aufgeloest werden.
-
-### A.38 Trade-Parsing mit pool_accounts muss PoolCacheUpdate auf JetStream publizieren
-- **Datei:** `tests/invariants_pool_cache_sync.rs` (erweitert)
-- **Invariante:** Wenn market-data bei Trade-Parsing pool_accounts fuer einen PumpSwap Pool erhaelt, MUSS ein `PoolCacheUpdate` mit pool_accounts in metadata auf JetStream publiziert werden. DexPoolAccounts auf NATS pub/sub allein ist nicht ausreichend (nicht persistent).
-
-### A.39 Liquidation-Quote-Timeout muss >= 30s sein
-- **Datei:** `tests/invariants_liquidation_flow.rs` (erweitert)
-- **Invariante:** Das Timeout fuer `pump_amm.quote_exact_in()` im Liquidation-Pfad muss mindestens 30 Sekunden betragen. getProgramAccounts fuer PumpSwap AMM (6.2M Accounts) braucht ~26s als letzter Fallback.
-
-### A.40 Nach Startup-Bootstrap muessen PumpSwap Pools pool_accounts haben
-- **Datei:** `tests/invariants_pool_cache_sync.rs` (erweitert)
-- **Invariante:** Nach dem JetStream-Bootstrap und dem proaktiven Seeding-Schritt muessen alle PumpSwap Pools im SLAVE LivePoolCache gueltige (nicht-leere) pool_accounts haben, sofern der Pool on-chain existiert.
+### A.37-A.40 zurueckgezogen
+- Die zuvor vorgeschlagenen Invarianten A.37-A.40 wurden **nicht** als aktive Eval-Invarianten uebernommen.
+- Grund: Der dazu erstellte Testansatz basierte ueberwiegend auf Source-Code-Scans und Regex-/String-Matching gegen das Impl-Repo statt auf belastbaren Verhaltens- oder Blackbox-Tests.
+- Der lokale Eval-Revert entfernt die zugehoerigen Testdateien wieder. Bis ein sinnvoller verhaltensorientierter Testansatz vorliegt, gelten A.37-A.40 hier **nicht** als aktive Spec-Anforderungen.
 
 ---
 
