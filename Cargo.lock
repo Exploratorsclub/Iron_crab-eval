@@ -2313,7 +2313,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "ironcrab",
- "regex",
  "rust_decimal",
  "serde",
  "serde_json",
