@@ -186,6 +186,18 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** RPC-Inventory(N Token) → N Liquidation-Intents. `cashback_enabled` wird per RPC verifiziert wenn Cache-Miss. `run_liquidation_job` blockiert Main-Loop nicht (tokio::spawn).
 - **Kontext:** Liquidation scheiterte weil: (a) `cashback_enabled` auf `false` defaulted (pool_cache_sync.rs), (b) `run_liquidation_job().await` Main-Loop blockierte.
 
+### A.30 cashback_enabled JetStream-Propagierung
+- **Datei:** `tests/invariants_pumpfun_cashback.rs` (erweitert)
+- **Invariante:** `cashback_enabled` muss korrekt von Geyser ueber JetStream PoolCacheUpdate-Metadata zum SLAVE LivePoolCache propagiert werden. JetStream-bootstrapped PumpFun-Pools duerfen `cashback_enabled` NICHT auf `false` hardcoden wenn der Wert im Metadata vorhanden ist.
+- **Formal:** PoolCacheUpdate mit metadata.cashback_enabled="true" → build_minimal_pool_state() → PumpFunState.cashback_enabled == true. PoolCacheUpdate OHNE cashback_enabled in metadata → PumpFunState.cashback_enabled == false (backward-compat default).
+- **Kontext:** Root Cause des Custom(6024) Overflow: JetStream-Cache hatte cashback_enabled=false, Cache-HIT verhinderte RPC-Fallback, build_sell_ix liess user_volume_accumulator weg.
+
+### A.31 Cold Path cashback_enabled RPC-Verifikation
+- **Datei:** `tests/invariants_liquidation_flow.rs` (erweitert)
+- **Invariante:** Im Cold Path (allow_rpc_fallback=true, z.B. Liquidation) muss `cashback_enabled` IMMER per RPC verifiziert werden, auch wenn der LivePoolCache einen HIT liefert. Ein Cache-HIT mit cashback_enabled=false darf im Cold Path NICHT blind vertraut werden.
+- **Formal:** build_swap_ix_async_with_slippage(allow_rpc_fallback=true) fuer Token mit on-chain cashback_enabled=true → Instruction hat 16 Accounts (mit user_volume_accumulator), unabhaengig vom Cache-Wert.
+- **Kontext:** JetStream-Cache liefert cashback_enabled=false (nicht im Metadata), Cache-HIT verhindert RPC-Fallback → falsches Account-Layout → Overflow(6024).
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
