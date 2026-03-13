@@ -216,7 +216,7 @@ fn test_a39_liquidation_quote_timeout_minimum_30s() {
         .expect("Cannot read execution_engine.rs — is the Iron_crab sibling directory present?");
 
     let re = regex::Regex::new(
-        r"timeout\(Duration::from_secs\((\d+)\)\s*,\s*\n?\s*pump_amm\.quote_exact_in",
+        r"timeout\(\s*Duration::from_secs\((\d+)\)\s*,\s*pump_amm\.quote_exact_in",
     )
     .expect("Bad regex");
 
