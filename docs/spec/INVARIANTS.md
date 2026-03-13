@@ -295,6 +295,10 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Datei:** `tests/invariants_liquidation_flow.rs` (erweitert)
 - **Invariante:** Der Retry-Diagnostic-Scan im Liquidation-Job muss sowohl SPL Token als auch Token-2022 Accounts per `getTokenAccountsByOwner` abfragen, analog zur initialen Scan-Phase.
 
+### A.36 discover_pool_static muss bekannte Pool-Adressen per getAccount nutzen
+- **Datei:** `tests/invariants_hot_path_no_rpc.rs` (erweitert)
+- **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt (auch ohne pool_accounts), muss `discover_pool_static` zuerst einen einzelnen `getAccount` Call fuer diese bekannte Adresse versuchen, bevor auf den langsamen `getProgramAccounts`-Scan zurueckgefallen wird. Der `getProgramAccounts`-Scan ist nur noch Last-Resort fuer komplett unbekannte Pools.
+
 ---
 
 ## C. Architektur-Prinzipien (GPT-Empfehlungen)
