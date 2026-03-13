@@ -2249,7 +2249,7 @@ dependencies = [
 [[package]]
 name = "ironcrab"
 version = "0.4.0"
-source = "git+https://github.com/Exploratorsclub/Iron_crab.git?branch=architecture-rebuild#fae210f6206d9e197c0383105922d88d0979db7e"
+source = "git+https://github.com/Exploratorsclub/Iron_crab.git?branch=architecture-rebuild#049f3c0104cd0c89f2462b9e8969f5b5dc9dce8a"
 dependencies = [
  "anyhow",
  "async-nats",
