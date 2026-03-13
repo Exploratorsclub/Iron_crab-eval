@@ -198,6 +198,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** build_swap_ix_async_with_slippage(allow_rpc_fallback=true) fuer Token mit on-chain cashback_enabled=true → Instruction hat 16 Accounts (mit user_volume_accumulator), unabhaengig vom Cache-Wert.
 - **Kontext:** JetStream-Cache liefert cashback_enabled=false (nicht im Metadata), Cache-HIT verhindert RPC-Fallback → falsches Account-Layout → Overflow(6024).
 
+### A.32 Cold Path pump_amm degenerate Reserves RPC-Fallback
+- **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
+- **Invariante:** Im Cold Path (allow_rpc_on_miss=true, z.B. Liquidation) muss `pump_amm` `quote_exact_in()` bei degenerate Cache-Reserves (eine Seite=0, amount_out=0) zum RPC-Fallback durchfallen statt `None` zurueckzugeben. Der Hot Path (allow_rpc_on_miss=false) darf weiterhin `None` zurueckgeben.
+- **Formal:** LivePoolCache hat PumpAmm mit base_reserve=Some(X), quote_reserve=Some(0) (oder umgekehrt). quote_exact_in(allow_rpc_on_miss=true) → darf NICHT Ok(None) zurueckgeben wenn on-chain beide Reserves > 0. quote_exact_in(allow_rpc_on_miss=false) → Ok(None) ist korrekt (Hot Path, kein RPC).
+- **Kontext:** Nach Restart werden PumpSwap AMM Pools mit (0,0) entdeckt. Vault-Balance-Updates kommen asynchron (eine Seite zuerst). Cache-HIT mit degenerate Reserves verhindert RPC-Fallback → LIQUIDATION SKIP fuer migrierte Token.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
