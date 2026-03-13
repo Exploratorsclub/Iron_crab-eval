@@ -1,10 +1,11 @@
-//! Invariante: Liquidation 6005-Retry Komponenten (INVARIANTS.md A.13, A.29)
+//! Invariante: Liquidation 6005-Retry Komponenten (INVARIANTS.md A.13, A.29, A.39)
 //!
 //! Verifiziert mark_pumpfun_complete_for_mint und find_pump_amm_pool_by_base_mint.
 //! Der vollständige run_liquidation_job-Flow (6005 → Retry mit pump_amm) wird durch
 //! golden_replay_liquidation_6005_retry getestet.
 //!
 //! A.29: Liquidation Vollständigkeit – build_sell_ix Account-Layout, count mit Locks.
+//! A.39: Liquidation-Quote-Timeout >= 30s (getProgramAccounts fuer PumpSwap ~26s).
 
 use ironcrab::execution::live_pool_cache::{
     create_shared_cache, CachedPoolState, PumpAmmState, PumpFunState, SharedLivePoolCache,
@@ -202,5 +203,54 @@ fn liquidation_non_cashback_account_layout_15() {
         ix.accounts.len(),
         15,
         "PumpFun SELL with cashback_enabled=false must have 15 accounts"
+    );
+}
+
+// --- A.39: Liquidation-Quote-Timeout >= 30s ---
+
+/// A.39: Liquidation pump_amm.quote_exact_in timeout must be >= 30s
+/// getProgramAccounts for PumpSwap takes ~26s, so anything less causes spurious timeouts.
+#[test]
+fn test_a39_liquidation_quote_timeout_minimum_30s() {
+    let src = std::fs::read_to_string("../Iron_crab/src/bin/execution_engine.rs")
+        .expect("Cannot read execution_engine.rs — is the Iron_crab sibling directory present?");
+
+    let re = regex::Regex::new(
+        r"timeout\(Duration::from_secs\((\d+)\)\s*,\s*\n?\s*pump_amm\.quote_exact_in",
+    )
+    .expect("Bad regex");
+
+    let mut found = false;
+    for cap in re.captures_iter(&src) {
+        let secs: u64 = cap[1].parse().expect("Not a number");
+        found = true;
+        assert!(
+            secs >= 30,
+            "A.39 VIOLATED: Liquidation quote timeout is {}s, must be >= 30s \
+             (getProgramAccounts for PumpSwap takes ~26s)",
+            secs
+        );
+    }
+
+    if !found {
+        let alt_re = regex::Regex::new(
+            r"timeout\(Duration::from_secs\((\d+)\)[^)]*pump_amm[.\s]*quote",
+        )
+        .expect("Bad alt regex");
+        for cap in alt_re.captures_iter(&src) {
+            let secs: u64 = cap[1].parse().expect("Not a number");
+            found = true;
+            assert!(
+                secs >= 30,
+                "A.39 VIOLATED: Liquidation quote timeout is {}s, must be >= 30s",
+                secs
+            );
+        }
+    }
+
+    assert!(
+        found,
+        "A.39: Could not find liquidation pump_amm quote timeout pattern in execution_engine.rs. \
+         Expected: timeout(Duration::from_secs(N), pump_amm.quote_exact_in"
     );
 }
