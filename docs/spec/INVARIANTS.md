@@ -280,6 +280,21 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | I-26 | Architektur-Änderungen nur mit expliziter Freigabe. | Scope Creep |
 | I-27 | SSH/Server-Befehle nur wenn User explizit anfordert oder genehmigt. | — |
 
+### A.33 PoolDiscovered darf pool_accounts im SLAVE Cache nicht ueberschreiben
+- **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs` (erweitert)
+- **Invariante:** Wenn der SLAVE LivePoolCache bereits einen PumpAmm-Eintrag mit nicht-leeren pool_accounts hat und ein neues PoolDiscovered Event ohne pool_accounts (oder mit leeren) ankommt, muessen die bestehenden pool_accounts erhalten bleiben.
+- **Formal:** LivePoolCache.get(pool).pool_accounts = [14 Pubkeys]. apply_pool_cache_update(PoolDiscovered{pool, pool_accounts=[]}) → LivePoolCache.get(pool).pool_accounts == [14 Pubkeys] (unveraendert). Ebenso fuer creator.
+- **Kontext:** Root Cause von Bug #28: PoolDiscovered upsert loeschte pool_accounts, Liquidation scheiterte mit err_discovery.
+
+### A.34 build_swap_ix muss base_token_program fuer Token-2022 korrekt setzen
+- **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs` (erweitert)
+- **Invariante:** `build_swap_ix()` muss fuer Instruction-Account 11 (base token program) die aus `cached_data` aufgeloeste `base_token_program` verwenden. Fuer Token-2022 Tokens muss dies `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb` sein, nicht `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`.
+- **Formal:** PumpFunAmmDex mit cached_data["token_program:{base_mint}"] = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb". build_swap_ix(sell) → accounts[11] == TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb.
+
+### A.35 Liquidation Retry Scan muss Token-2022 abdecken
+- **Datei:** `tests/invariants_liquidation_flow.rs` (erweitert)
+- **Invariante:** Der Retry-Diagnostic-Scan im Liquidation-Job muss sowohl SPL Token als auch Token-2022 Accounts per `getTokenAccountsByOwner` abfragen, analog zur initialen Scan-Phase.
+
 ---
 
 ## C. Architektur-Prinzipien (GPT-Empfehlungen)
