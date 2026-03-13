@@ -1,11 +1,18 @@
-//! Invarianten A.22–A.24: PumpFun Cashback-Upgrade (6024 Fix)
+//! Invarianten A.22–A.24, A.30: PumpFun Cashback-Upgrade (6024 Fix)
 //!
 //! Post-Cashback-Upgrade (Feb 2026): bonding_curve_v2 PDA, cashback_enabled in SELL,
 //! BondingCurveState::parse() liest cashback_enabled aus Byte 82.
+//!
+//! A.30: cashback_enabled JetStream-Propagierung — PoolCacheUpdate metadata
+//! wird korrekt in LivePoolCache PumpFunState.cashback_enabled uebernommen.
 
+use ironcrab::execution::live_pool_cache::{CachedPoolState, LivePoolCache};
+use ironcrab::execution::pool_cache_sync::apply_pool_cache_update;
+use ironcrab::ipc::{PoolCacheUpdate, PoolCacheUpdateType, RecordHeader};
 use ironcrab::solana::dex::pumpfun::{BondingCurveState, PumpFunDex, PUMPFUN_PROGRAM_ID};
 use ironcrab::solana::rpc::SolanaRpc;
 use solana_sdk::pubkey::Pubkey;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -291,4 +298,96 @@ fn bonding_curve_state_parse_old_layout_no_cashback() {
         !state.cashback_enabled,
         "81-byte layout (no byte 82) must default cashback_enabled to false"
     );
+}
+
+// --- A.30: cashback_enabled JetStream-Propagierung ---
+
+fn make_pumpfun_pool_cache_update(
+    pool_address: &str,
+    base_mint: &str,
+    metadata: HashMap<String, String>,
+) -> PoolCacheUpdate {
+    PoolCacheUpdate {
+        header: RecordHeader::new("market-data", "v0.1", "run-eval"),
+        dex: "pumpfun".to_string(),
+        base_mint: base_mint.to_string(),
+        quote_mint: "So11111111111111111111111111111111111111112".to_string(),
+        base_reserve: 793_100_000_000_000,
+        quote_reserve: 30_000_000_000,
+        pool_address: pool_address.to_string(),
+        metadata: Some(metadata),
+        geyser_slot: 100,
+        liquidity_lamports: Some(30_000_000_000),
+        update_type: PoolCacheUpdateType::PoolDiscovered,
+    }
+}
+
+/// A.30a: PoolCacheUpdate mit metadata cashback_enabled="true"
+/// muss PumpFunState.cashback_enabled == true im LivePoolCache setzen.
+#[test]
+fn jetstream_metadata_propagates_cashback_enabled_true() {
+    let cache = Arc::new(LivePoolCache::new());
+    let pool_address = Pubkey::new_unique().to_string();
+    let base_mint = Pubkey::new_unique().to_string();
+
+    let mut metadata = HashMap::new();
+    metadata.insert("creator".to_string(), Pubkey::new_unique().to_string());
+    metadata.insert("cashback_enabled".to_string(), "true".to_string());
+
+    let update = make_pumpfun_pool_cache_update(&pool_address, &base_mint, metadata);
+
+    let modified = apply_pool_cache_update(&cache, &update);
+    assert!(
+        modified,
+        "apply_pool_cache_update should return true for new entry"
+    );
+
+    let pool_pubkey = Pubkey::from_str(&pool_address).unwrap();
+    let state = cache
+        .get(&pool_pubkey)
+        .expect("pool should be cached after update");
+    match state {
+        CachedPoolState::PumpFun(s) => {
+            assert!(
+                s.cashback_enabled,
+                "A.30: cashback_enabled must be true when JetStream metadata contains \
+                 cashback_enabled=\"true\""
+            );
+        }
+        _ => panic!("Expected PumpFun state from pumpfun dex update"),
+    }
+}
+
+/// A.30b: PoolCacheUpdate OHNE cashback_enabled in metadata
+/// muss PumpFunState.cashback_enabled == false setzen (backward-compat default).
+#[test]
+fn jetstream_metadata_without_cashback_defaults_to_false() {
+    let cache = Arc::new(LivePoolCache::new());
+    let pool_address = Pubkey::new_unique().to_string();
+    let base_mint = Pubkey::new_unique().to_string();
+
+    let mut metadata = HashMap::new();
+    metadata.insert("creator".to_string(), Pubkey::new_unique().to_string());
+
+    let update = make_pumpfun_pool_cache_update(&pool_address, &base_mint, metadata);
+
+    let modified = apply_pool_cache_update(&cache, &update);
+    assert!(
+        modified,
+        "apply_pool_cache_update should return true for new entry"
+    );
+
+    let pool_pubkey = Pubkey::from_str(&pool_address).unwrap();
+    let state = cache
+        .get(&pool_pubkey)
+        .expect("pool should be cached after update");
+    match state {
+        CachedPoolState::PumpFun(s) => {
+            assert!(
+                !s.cashback_enabled,
+                "A.30: cashback_enabled must default to false when not present in JetStream metadata"
+            );
+        }
+        _ => panic!("Expected PumpFun state from pumpfun dex update"),
+    }
 }
