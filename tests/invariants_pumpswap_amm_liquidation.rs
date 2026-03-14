@@ -164,10 +164,10 @@ fn balance_updated_partial_base_only_preserves_value() {
 // --- I-24d: Cold-Path Discovery nur per Request/Reply ueber market-data ---
 //
 // Verhaltensorientierte Tests am beobachtbaren Vertrag:
-// a) fehlende pool_accounts fuehren nicht zu lokaler Engine-Truth-Heilung
+// a) fehlende pool_accounts fuehren nicht zu lokaler Engine-Truth-Heilung (inkl. Cache-Postcondition)
 // b) autoritativer PoolCacheUpdate macht den Zustand verfuegbar
 // c) nach autoritativem Update kann der naechste Versuch sinnvoll fortfahren
-// d) not_found/timeout bleiben klare Failure-Outcomes statt stiller lokaler Heilung
+// d) not_found (Cache-Miss ohne RPC) und externer Fehler (RPC unreachable) getrennt abgesichert
 
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
@@ -176,7 +176,7 @@ fn wsol_mint() -> Pubkey {
 }
 
 /// I-24d (a): Pool mit leeren pool_accounts – Cold Path liefert Failure, keine lokale Heilung.
-/// Beobachtbarer Vertrag: Wenn pool_accounts fehlen, kommt kein Some mit Daten.
+/// Beobachtbarer Vertrag: Rueckgabewert kein Erfolg; Cache-Postcondition: SLAVE Cache unveraendert.
 #[tokio::test]
 async fn i24d_missing_pool_accounts_no_local_healing() {
     let cache = Arc::new(LivePoolCache::new());
@@ -199,7 +199,7 @@ async fn i24d_missing_pool_accounts_no_local_healing() {
     );
 
     let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
-    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, true);
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache.clone(), true);
 
     let result = dex.pool_accounts_v1_for_base_mint(base_mint).await;
 
@@ -211,6 +211,12 @@ async fn i24d_missing_pool_accounts_no_local_healing() {
     assert!(
         !got_data.unwrap_or(false),
         "I-24d: Fehlende pool_accounts duerfen nicht zu Some mit Daten fuehren (keine lokale Heilung)"
+    );
+
+    let after = cache.get_pump_amm_pool_accounts_by_base_mint(&base_mint);
+    assert!(
+        after.is_none_or(|v| v.is_empty()),
+        "I-24d: Cache-Postcondition – SLAVE Cache darf nicht lokal mit pool_accounts befuellt worden sein"
     );
 }
 
@@ -300,34 +306,34 @@ async fn i24d_after_authoritative_update_retry_can_proceed() {
     );
     let accounts = result.unwrap();
     assert!(
-        accounts.is_some() && accounts.as_ref().unwrap().len() >= 12,
-        "I-24d: Retry kann fortfahren wenn pool_accounts nach Update verfuegbar sind"
+        accounts.as_ref().is_some_and(|v| v.len() == 14),
+        "I-24d: PumpAmm erwartet 14 pool_accounts; Retry kann fortfahren wenn verfuegbar"
     );
 }
 
-/// I-24d (d) not_found: Unbekannter base_mint – klarer Failure-Outcome.
+/// I-24d (d) not_found: Unbekannter base_mint, leerer Cache, kein RPC.
+/// Sauber getrennt von external_failure: allow_rpc_on_miss=false, nur Cache-Lookup.
 #[tokio::test]
 async fn i24d_not_found_clear_failure() {
     let cache = Arc::new(LivePoolCache::new());
     let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
-    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, true);
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, false);
 
     let unknown_mint = Pubkey::new_unique();
     let result = dex.pool_accounts_v1_for_base_mint(unknown_mint).await;
 
-    let has_data = result
-        .ok()
-        .and_then(|o| o)
-        .map(|v| v.len() >= 12)
-        .unwrap_or(false);
     assert!(
-        !has_data,
-        "I-24d: not_found darf nicht zu Some mit pool_accounts fuehren"
+        result.is_ok(),
+        "not_found-Pfad: API liefert Ok (kein Panic)"
+    );
+    assert!(
+        result.unwrap().is_none(),
+        "I-24d: not_found (Cache-Miss) muss Ok(None) liefern"
     );
 }
 
 /// I-24d (d) external failure: Pool mit leeren pool_accounts, Cold Path, RPC unreachable.
-/// Modelliert Timeout/Unavailable – klarer Failure statt stiller Heilung.
+/// Modelliert Timeout/Unavailable – klarer Failure. Getrennt von not_found durch RPC-Versuch.
 #[tokio::test]
 async fn i24d_external_failure_clear_failure() {
     let cache = Arc::new(LivePoolCache::new());
@@ -358,7 +364,7 @@ async fn i24d_external_failure_clear_failure() {
         .as_ref()
         .ok()
         .and_then(|o| o.as_ref())
-        .map(|v| v.len() >= 12)
+        .map(|v| v.len() == 14)
         .unwrap_or(false);
     assert!(
         !has_data,
