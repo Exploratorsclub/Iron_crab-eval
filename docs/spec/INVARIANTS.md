@@ -206,10 +206,11 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 
 ### A.38 Cold-Path Discovery nur per Request/Reply (I-24d)
 - **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
-- **Invariante:** Wenn execution-engine im Cold Path (Liquidation, manual actions, 6005-Retry) fuer die Ausfuehrung notwendige pool_accounts fehlen, darf sie hoechstens eine korrelierte Discovery-Anforderung an market-data senden und begrenzt auf die autoritative Antwort warten. Die eigentliche Discovery, das Schreiben in den MASTER Cache und die Publikation per JetStream PoolCacheUpdate bleiben bei market-data. execution-engine darf fehlende pool_accounts weder selbst discovern noch lokal als Ersatz-Truth in den SLAVE Cache schreiben.
-- **Formal:** (1) Pool mit leeren pool_accounts → pool_accounts_v1_for_base_mint liefert None (kein lokaler Engine-Write). (2) PoolCacheUpdate mit pool_accounts in metadata (von market-data) → Cache hat pool_accounts. (3) Nach autoritativem Update → build_swap_ix erfolgreich. (4) Bei not_found/Timeout → klarer Failure-Outcome, keine stille lokale Heilung.
-- **Getestet:** i24d_missing_pool_accounts_yields_none_no_local_truth; i24d_recovery_via_authoritative_pool_cache_update; i24d_after_authoritative_update_retry_succeeds.
-- **Kontext:** I-24d; Cold Path darf nur ueber market-data Request/Reply pool_accounts erhalten.
+- **Invariante:** Wenn execution-engine im Cold Path (Liquidation, manual actions, 6005-Retry) fuer die Ausfuehrung notwendige pool_accounts fehlen, darf sie hoechstens eine korrelierte Discovery-Anforderung an market-data senden und begrenzt auf die autoritative Antwort warten. execution-engine darf fehlende pool_accounts weder selbst discovern noch lokal als Ersatz-Truth in den SLAVE Cache schreiben.
+- **Beobachtbarer Vertrag (Eval):** (a) Fehlende pool_accounts fuehren nicht zu lokaler Engine-Truth-Heilung. (b) Autoritativer PoolCacheUpdate macht den Zustand verfuegbar. (c) Nach autoritativem Update kann der naechste Versuch fortfahren. (d) not_found und externer Fehler (RPC unreachable als Proxy fuer Timeout) bleiben klare Failure-Outcomes.
+- **Getestet:** i24d_missing_pool_accounts_no_local_healing; i24d_authoritative_update_makes_state_available; i24d_after_authoritative_update_retry_can_proceed; i24d_not_found_clear_failure; i24d_external_failure_clear_failure.
+- **Hinweis:** Echter Request/Reply-E2E zu market-data ist im Eval-Repo nicht modellierbar; Tests nutzen Cold Path (allow_rpc_on_miss=true) und autoritativen PoolCacheUpdate-Pfad.
+- **Kontext:** I-24d; Cold Path darf nur ueber market-data pool_accounts erhalten.
 
 ---
 
