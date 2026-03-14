@@ -333,7 +333,7 @@ async fn i24d_not_found_clear_failure() {
 }
 
 /// I-24d (d) external failure: Pool mit leeren pool_accounts, Cold Path, RPC unreachable.
-/// Modelliert Timeout/Unavailable – klarer Failure. Getrennt von not_found durch RPC-Versuch.
+/// Modelliert Timeout/Unavailable – klarer Fehlervertrag (Err). Getrennt von not_found (Ok(None)).
 #[tokio::test]
 async fn i24d_external_failure_clear_failure() {
     let cache = Arc::new(LivePoolCache::new());
@@ -360,14 +360,8 @@ async fn i24d_external_failure_clear_failure() {
 
     let result = dex.pool_accounts_v1_for_base_mint(base_mint).await;
 
-    let has_data = result
-        .as_ref()
-        .ok()
-        .and_then(|o| o.as_ref())
-        .map(|v| v.len() == 14)
-        .unwrap_or(false);
     assert!(
-        !has_data,
-        "I-24d: Bei externem Fehler (RPC unreachable) darf kein Daten-Erfolg entstehen"
+        result.is_err(),
+        "I-24d: externer Fehler (RPC unreachable) muss Err liefern, nicht Ok(None)"
     );
 }
