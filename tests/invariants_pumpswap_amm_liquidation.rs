@@ -3,11 +3,17 @@
 //! Verifiziert, dass PumpAmm mit degenerate Cache-Reserves (eine Seite=0)
 //! korrekt als Fehler behandelt wird, und dass valide Reserves funktionieren.
 //! Zusaetzlich: BalanceUpdated Merge-Verhalten bei partial reserves.
+//!
+//! Invariante I-24d: Cold-Path Discovery nur per Request/Reply ueber market-data.
+//! pool_accounts duerfen nur via autoritativem PoolCacheUpdate in den SLAVE Cache;
+//! keine lokale Engine-Write als Truth-Quelle. Recovery via autoritativen Update-Pfad.
 
 use ironcrab::execution::live_pool_cache::{CachedPoolState, LivePoolCache, PumpAmmState};
 use ironcrab::execution::pool_cache_sync::apply_pool_cache_update;
 use ironcrab::execution::quote_calculator::quote_output_amount;
 use ironcrab::ipc::{PoolCacheUpdate, PoolCacheUpdateType, RecordHeader};
+use ironcrab::solana::dex::pumpfun_amm::PumpFunAmmDex;
+use ironcrab::solana::rpc::SolanaRpc;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -153,4 +159,209 @@ fn balance_updated_partial_base_only_preserves_value() {
         }
         _ => panic!("Expected PumpAmm state"),
     }
+}
+
+// --- I-24d: Cold-Path Discovery nur per Request/Reply ueber market-data ---
+//
+// Verhaltensorientierte Tests am beobachtbaren Vertrag:
+// a) fehlende pool_accounts fuehren nicht zu lokaler Engine-Truth-Heilung (inkl. Cache-Postcondition)
+// b) autoritativer PoolCacheUpdate macht den Zustand verfuegbar
+// c) nach autoritativem Update kann der naechste Versuch sinnvoll fortfahren
+// d) not_found (Cache-Miss ohne RPC) und externer Fehler (RPC unreachable) getrennt abgesichert
+
+const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
+
+fn wsol_mint() -> Pubkey {
+    Pubkey::from_str(WSOL_MINT).unwrap()
+}
+
+/// I-24d (a): Pool mit leeren pool_accounts – Cold Path liefert Failure, keine lokale Heilung.
+/// Beobachtbarer Vertrag: Rueckgabewert kein Erfolg; Cache-Postcondition: SLAVE Cache unveraendert.
+#[tokio::test]
+async fn i24d_missing_pool_accounts_no_local_healing() {
+    let cache = Arc::new(LivePoolCache::new());
+    let pool_market = Pubkey::new_unique();
+    let base_mint = Pubkey::new_unique();
+
+    cache.upsert(
+        pool_market,
+        CachedPoolState::PumpAmm(PumpAmmState {
+            base_mint,
+            quote_mint: wsol_mint(),
+            pool_base_token_account: Pubkey::new_unique(),
+            pool_quote_token_account: Pubkey::new_unique(),
+            base_reserve: Some(1_000_000_000),
+            quote_reserve: Some(100_000_000),
+            pool_accounts: vec![],
+            creator: None,
+        }),
+        100,
+    );
+
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache.clone(), true);
+
+    let result = dex.pool_accounts_v1_for_base_mint(base_mint).await;
+
+    let got_data = result
+        .as_ref()
+        .ok()
+        .and_then(|o| o.as_ref())
+        .map(|v| !v.is_empty());
+    assert!(
+        !got_data.unwrap_or(false),
+        "I-24d: Fehlende pool_accounts duerfen nicht zu Some mit Daten fuehren (keine lokale Heilung)"
+    );
+
+    let after = cache.get_pump_amm_pool_accounts_by_base_mint(&base_mint);
+    assert!(
+        after.is_none_or(|v| v.is_empty()),
+        "I-24d: Cache-Postcondition – SLAVE Cache darf nicht lokal mit pool_accounts befuellt worden sein"
+    );
+}
+
+/// I-24d (b): Autoritativer PoolCacheUpdate macht pool_accounts verfuegbar.
+/// Beobachtbarer Vertrag: apply_pool_cache_update (von market-data) liefert den Zustand.
+#[test]
+fn i24d_authoritative_update_makes_state_available() {
+    let cache = Arc::new(LivePoolCache::new());
+    let pool_address = Pubkey::new_unique();
+    let base_mint = Pubkey::new_unique();
+
+    let pool_accounts: Vec<Pubkey> = (0..14).map(|_| Pubkey::new_unique()).collect();
+    let accounts_str: Vec<String> = pool_accounts.iter().map(|p| p.to_string()).collect();
+
+    let update = PoolCacheUpdate {
+        header: RecordHeader::new("market-data", "v0.1", "run-eval"),
+        dex: "pump_amm".to_string(),
+        base_mint: base_mint.to_string(),
+        quote_mint: WSOL_MINT.to_string(),
+        base_reserve: 1_000_000_000,
+        quote_reserve: 100_000_000,
+        pool_address: pool_address.to_string(),
+        metadata: Some({
+            let mut m = HashMap::new();
+            m.insert("pool_accounts".to_string(), accounts_str.join(","));
+            m
+        }),
+        geyser_slot: 100,
+        liquidity_lamports: None,
+        update_type: PoolCacheUpdateType::PoolDiscovered,
+    };
+    apply_pool_cache_update(&cache, &update);
+
+    let result = cache.get_pump_amm_pool_accounts_by_base_mint(&base_mint);
+    assert!(
+        result.is_some(),
+        "I-24d: Autoritativer PoolCacheUpdate muss pool_accounts verfuegbar machen"
+    );
+    let accounts = result.unwrap();
+    assert_eq!(accounts.len(), 14);
+    assert_eq!(accounts, pool_accounts);
+}
+
+/// I-24d (c): Nach autoritativem Update kann der naechste Versuch fortfahren.
+/// Beobachtbarer Vertrag: DEX liefert pool_accounts nach autoritativem Update.
+#[tokio::test]
+async fn i24d_after_authoritative_update_retry_can_proceed() {
+    let cache = Arc::new(LivePoolCache::new());
+    let pool_market = Pubkey::new_unique();
+    let base_mint = Pubkey::new_unique();
+
+    let pool_accounts: Vec<Pubkey> = (0..14).map(|_| Pubkey::new_unique()).collect();
+    let update = PoolCacheUpdate {
+        header: RecordHeader::new("market-data", "v0.1", "run-eval"),
+        dex: "pump_amm".to_string(),
+        base_mint: base_mint.to_string(),
+        quote_mint: WSOL_MINT.to_string(),
+        base_reserve: 1_000_000_000,
+        quote_reserve: 100_000_000,
+        pool_address: pool_market.to_string(),
+        metadata: Some({
+            let mut m = HashMap::new();
+            m.insert(
+                "pool_accounts".to_string(),
+                pool_accounts
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            m
+        }),
+        geyser_slot: 100,
+        liquidity_lamports: None,
+        update_type: PoolCacheUpdateType::PoolDiscovered,
+    };
+    apply_pool_cache_update(&cache, &update);
+
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, true);
+
+    let result = dex.pool_accounts_v1_for_base_mint(base_mint).await;
+
+    assert!(
+        result.is_ok(),
+        "I-24d: Nach autoritativem Update muss pool_accounts abrufbar sein"
+    );
+    let accounts = result.unwrap();
+    assert!(
+        accounts.as_ref().is_some_and(|v| v.len() == 14),
+        "I-24d: PumpAmm erwartet 14 pool_accounts; Retry kann fortfahren wenn verfuegbar"
+    );
+}
+
+/// I-24d (d) not_found: Unbekannter base_mint, leerer Cache, kein RPC.
+/// Sauber getrennt von external_failure: allow_rpc_on_miss=false, nur Cache-Lookup.
+#[tokio::test]
+async fn i24d_not_found_clear_failure() {
+    let cache = Arc::new(LivePoolCache::new());
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, false);
+
+    let unknown_mint = Pubkey::new_unique();
+    let result = dex.pool_accounts_v1_for_base_mint(unknown_mint).await;
+
+    assert!(
+        result.is_ok(),
+        "not_found-Pfad: API liefert Ok (kein Panic)"
+    );
+    assert!(
+        result.unwrap().is_none(),
+        "I-24d: not_found (Cache-Miss) muss Ok(None) liefern"
+    );
+}
+
+/// I-24d (d) external failure: Pool mit leeren pool_accounts, Cold Path, RPC unreachable.
+/// Modelliert Timeout/Unavailable – klarer Fehlervertrag (Err). Getrennt von not_found (Ok(None)).
+#[tokio::test]
+async fn i24d_external_failure_clear_failure() {
+    let cache = Arc::new(LivePoolCache::new());
+    let pool_market = Pubkey::new_unique();
+    let base_mint = Pubkey::new_unique();
+
+    cache.upsert(
+        pool_market,
+        CachedPoolState::PumpAmm(PumpAmmState {
+            base_mint,
+            quote_mint: wsol_mint(),
+            pool_base_token_account: Pubkey::new_unique(),
+            pool_quote_token_account: Pubkey::new_unique(),
+            base_reserve: Some(1_000_000_000),
+            quote_reserve: Some(100_000_000),
+            pool_accounts: vec![],
+            creator: None,
+        }),
+        100,
+    );
+
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, true);
+
+    let result = dex.pool_accounts_v1_for_base_mint(base_mint).await;
+
+    assert!(
+        result.is_err(),
+        "I-24d: externer Fehler (RPC unreachable) muss Err liefern, nicht Ok(None)"
+    );
 }

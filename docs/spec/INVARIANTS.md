@@ -204,6 +204,14 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** LivePoolCache hat PumpAmm mit base_reserve=Some(X), quote_reserve=Some(0) (oder umgekehrt). quote_exact_in(allow_rpc_on_miss=true) → darf NICHT Ok(None) zurueckgeben wenn on-chain beide Reserves > 0. quote_exact_in(allow_rpc_on_miss=false) → Ok(None) ist korrekt (Hot Path, kein RPC).
 - **Kontext:** Nach Restart werden PumpSwap AMM Pools mit (0,0) entdeckt. Vault-Balance-Updates kommen asynchron (eine Seite zuerst). Cache-HIT mit degenerate Reserves verhindert RPC-Fallback → LIQUIDATION SKIP fuer migrierte Token.
 
+### A.38 Cold-Path Discovery nur per Request/Reply (I-24d)
+- **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
+- **Invariante:** Wenn execution-engine im Cold Path (Liquidation, manual actions, 6005-Retry) fuer die Ausfuehrung notwendige pool_accounts fehlen, darf sie hoechstens eine korrelierte Discovery-Anforderung an market-data senden und begrenzt auf die autoritative Antwort warten. execution-engine darf fehlende pool_accounts weder selbst discovern noch lokal als Ersatz-Truth in den SLAVE Cache schreiben.
+- **Beobachtbarer Vertrag (Eval):** (a) Fehlende pool_accounts fuehren nicht zu lokaler Engine-Truth-Heilung; Cache-Postcondition: keine lokal geheilten pool_accounts sichtbar. (b) Autoritativer PoolCacheUpdate macht den Zustand verfuegbar. (c) Nach autoritativem Update kann der naechste Versuch fortfahren (14 pool_accounts). (d) not_found liefert Ok(None); externer Fehler (RPC unreachable) liefert Err – belastbar getrennt.
+- **Getestet:** i24d_missing_pool_accounts_no_local_healing; i24d_authoritative_update_makes_state_available; i24d_after_authoritative_update_retry_can_proceed; i24d_not_found_clear_failure; i24d_external_failure_clear_failure.
+- **Hinweis:** Echter Request/Reply-E2E zu market-data ist im Eval-Repo nicht modellierbar; externer Fehler wird ueber RPC unreachable approximiert.
+- **Kontext:** I-24d; Cold Path darf nur ueber market-data pool_accounts erhalten.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
@@ -263,7 +271,7 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | I-21 | **Resource Locks**: Accounts/Pools/ATAs die Konflikte erzeugen werden gelockt. | Race Conditions |
 | I-22 | **Idempotency**: Engine vermeidet doppelte Verarbeitung (Intent-ID, Tx-Signature, in-flight Registry). | Doppel-Trades |
 
-### B.7 NATS und Topics (I-23 bis I-24b)
+### B.7 NATS und Topics (I-23 bis I-24d)
 
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
@@ -271,6 +279,7 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | I-24 | Topics: ironcrab.v1.market_events, ironcrab.v1.trade_intents, ironcrab.v1.execution_results, ironcrab.v1.decision_records (siehe src/nats/topics.rs). | — |
 | I-24a | **JetStream = SSOT für Bot-Zustand**: Wallet-Balances, Positionen, Pool-Cache, Config gehören in JetStream (persistent). Konsumenten bootstrappen und holen Live-Updates von dort. | Zustands-Drift |
 | I-24b | **Core NATS = Market Events**: Chain-Daten (Trades, Blocks, Preise) als Echtzeit-Events. Kein Bot-Zustand über Core NATS — Datenflut zu hoch, keine Persistenz. | — |
+| I-24d | **Cold-Path Discovery nur per Request/Reply**: execution-engine darf fehlende pool_accounts weder selbst discovern noch lokal in den SLAVE Cache schreiben. Discovery, MASTER-Write und JetStream-Publikation bleiben bei market-data. (Eval: A.38) | Architekturbruch |
 
 ### B.8 Entwicklungs-Workflow (I-25 bis I-27)
 
