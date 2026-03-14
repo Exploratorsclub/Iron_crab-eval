@@ -57,6 +57,17 @@ jobs:
         run: cargo build --manifest-path ../Iron_crab/Cargo.toml --bin execution-engine
         working-directory: ironcrab-eval
 
+      - name: Build market-data (für Request-Reply-E2E-Harness, I-24c/I-24d)
+        run: cargo build --manifest-path ../Iron_crab/Cargo.toml --bin market-data
+        working-directory: ironcrab-eval
+
+      - name: Install nats-server (für Request-Reply-E2E-Harness)
+        run: |
+          NATS_VER="v2.10.16"
+          curl -sL "https://github.com/nats-io/nats-server/releases/download/${NATS_VER}/nats-server-${NATS_VER}-linux-amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/nats-server-${NATS_VER}-linux-amd64/nats-server /usr/local/bin/
+          nats-server -v
+
       - name: Run tests
         run: cargo test --verbose
         working-directory: ironcrab-eval
