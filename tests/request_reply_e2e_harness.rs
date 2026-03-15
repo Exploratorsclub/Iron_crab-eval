@@ -8,6 +8,7 @@
 //! Keine Assertions auf Implementierungsdetails.
 
 use std::fs;
+use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -44,6 +45,21 @@ fn find_nats_server() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Maximale Wartezeit für /status-Readiness (Sekunden).
+const STATUS_POLL_TIMEOUT_SECS: u64 = 60;
+/// Intervall zwischen /status-Polls (Millisekunden).
+const STATUS_POLL_INTERVAL_MS: u64 = 300;
+
+/// Sucht das vorab gebaute Binary (reduziert Startlatenz vs. cargo run).
+fn find_binary(name: &str) -> Option<PathBuf> {
+    let path = iron_crab_root().join("target").join("debug").join(name);
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 /// Erzeugt eine freie Port-Nummer.
@@ -112,9 +128,6 @@ impl RequestReplyE2eHarness {
             .map_err(|e| format!("nats-server spawn: {}", e))?;
 
         self.nats_child = Some(child);
-
-        // Kurz warten, dann Verbindung prüfen
-        std::thread::sleep(Duration::from_millis(500));
         self.wait_nats_ready()?;
         Ok(())
     }
@@ -133,75 +146,105 @@ impl RequestReplyE2eHarness {
 
     /// Startet market-data mit --simulate (kein Geyser nötig).
     pub fn start_market_data(&mut self) -> Result<(), String> {
-        let manifest = iron_crab_root().join("Cargo.toml");
-        if !manifest.exists() {
-            return Err(format!("Iron_crab nicht gefunden: {:?}", iron_crab_root()));
-        }
-
         let log_dir = self._temp_dir.path().join("market_data_log");
         fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir: {}", e))?;
 
-        let child = Command::new("cargo")
-            .args([
-                "run",
-                "--manifest-path",
-                manifest.to_str().unwrap(),
-                "--bin",
-                "market-data",
-                "--",
-                "--nats-url",
-                &self.nats_url,
-                "--simulate",
-                "--metrics-port",
-                &self.market_data_metrics_port.to_string(),
-                "--log-dir",
-                log_dir.to_str().unwrap(),
-            ])
-            .current_dir(iron_crab_root().parent().unwrap())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("market-data spawn: {}", e))?;
+        let args = [
+            "--nats-url",
+            &self.nats_url,
+            "--simulate",
+            "--metrics-port",
+            &self.market_data_metrics_port.to_string(),
+            "--log-dir",
+            log_dir.to_str().unwrap(),
+        ];
+
+        let child = if let Some(bin) = find_binary("market-data") {
+            Command::new(bin)
+                .args(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        } else {
+            let manifest = iron_crab_root().join("Cargo.toml");
+            if !manifest.exists() {
+                return Err(format!("Iron_crab nicht gefunden: {:?}", iron_crab_root()));
+            }
+            Command::new("cargo")
+                .args([
+                    "run",
+                    "--manifest-path",
+                    manifest.to_str().unwrap(),
+                    "--bin",
+                    "market-data",
+                    "--",
+                ])
+                .args(args)
+                .current_dir(iron_crab_root().parent().unwrap())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        }
+        .map_err(|e| format!("market-data spawn: {}", e))?;
 
         self.market_data_child = Some(child);
-        std::thread::sleep(Duration::from_millis(800));
+        wait_for_component_status(
+            self.market_data_metrics_port,
+            "market-data",
+            &mut self.market_data_child,
+        )?;
         Ok(())
     }
 
     /// Startet execution-engine (ohne Keys; dry-run).
     pub fn start_execution_engine(&mut self) -> Result<(), String> {
-        let manifest = iron_crab_root().join("Cargo.toml");
-        if !manifest.exists() {
-            return Err(format!("Iron_crab nicht gefunden: {:?}", iron_crab_root()));
-        }
-
         let log_dir = self._temp_dir.path().join("execution_engine_log");
         fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir: {}", e))?;
 
-        let child = Command::new("cargo")
-            .args([
-                "run",
-                "--manifest-path",
-                manifest.to_str().unwrap(),
-                "--bin",
-                "execution-engine",
-                "--",
-                "--nats-url",
-                &self.nats_url,
-                "--dry-run",
-                "--metrics-port",
-                &self.execution_engine_metrics_port.to_string(),
-                "--log-dir",
-                log_dir.to_str().unwrap(),
-            ])
-            .current_dir(iron_crab_root().parent().unwrap())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("execution-engine spawn: {}", e))?;
+        let args = [
+            "--nats-url",
+            &self.nats_url,
+            "--dry-run",
+            "--metrics-port",
+            &self.execution_engine_metrics_port.to_string(),
+            "--log-dir",
+            log_dir.to_str().unwrap(),
+        ];
+
+        let child = if let Some(bin) = find_binary("execution-engine") {
+            Command::new(bin)
+                .args(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        } else {
+            let manifest = iron_crab_root().join("Cargo.toml");
+            if !manifest.exists() {
+                return Err(format!("Iron_crab nicht gefunden: {:?}", iron_crab_root()));
+            }
+            Command::new("cargo")
+                .args([
+                    "run",
+                    "--manifest-path",
+                    manifest.to_str().unwrap(),
+                    "--bin",
+                    "execution-engine",
+                    "--",
+                ])
+                .args(args)
+                .current_dir(iron_crab_root().parent().unwrap())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        }
+        .map_err(|e| format!("execution-engine spawn: {}", e))?;
 
         self.execution_engine_child = Some(child);
-        std::thread::sleep(Duration::from_millis(800));
+        wait_for_component_status(
+            self.execution_engine_metrics_port,
+            "execution-engine",
+            &mut self.execution_engine_child,
+        )?;
         Ok(())
     }
 
@@ -249,6 +292,86 @@ impl RequestReplyE2eHarness {
     pub fn temp_dir_path(&self) -> &Path {
         self._temp_dir.path()
     }
+}
+
+/// Wartet gebunden auf /status (HTTP 200). Bei Timeout: diagnostische Infos.
+fn wait_for_component_status(
+    port: u16,
+    component: &str,
+    child: &mut Option<Child>,
+) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{}/status", port);
+    let deadline = std::time::Instant::now() + Duration::from_secs(STATUS_POLL_TIMEOUT_SECS);
+    while std::time::Instant::now() < deadline {
+        if let Ok(resp) = reqwest::blocking::get(&url) {
+            if resp.status().is_success() {
+                let body = resp.text().unwrap_or_default();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(ready) = json.get("ready").and_then(|v| v.as_bool()) {
+                        if !ready {
+                            std::thread::sleep(Duration::from_millis(STATUS_POLL_INTERVAL_MS));
+                            continue;
+                        }
+                    }
+                }
+                return Ok(());
+            }
+        }
+        if let Some(c) = child {
+            if c.try_wait().ok().flatten().is_some() {
+                return Err(format!(
+                    "{} vorzeitig beendet: {}",
+                    component,
+                    format_process_diagnostics(c)
+                ));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(STATUS_POLL_INTERVAL_MS));
+    }
+    let diag = child
+        .as_mut()
+        .map(format_process_diagnostics)
+        .unwrap_or_else(|| "Prozess-Handle nicht verfügbar".to_string());
+    Err(format!(
+        "{} /status nach {}s nicht erreichbar. {}",
+        component, STATUS_POLL_TIMEOUT_SECS, diag
+    ))
+}
+
+fn read_pipe_excerpt(mut r: impl Read) -> String {
+    let mut buf = Vec::new();
+    let _ = r.read_to_end(&mut buf);
+    let s = String::from_utf8_lossy(&buf);
+    s.chars()
+        .rev()
+        .take(1500)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect()
+}
+
+/// Sammelt Blackbox-Diagnostik aus Prozess (stdout/stderr, Exit-Status).
+fn format_process_diagnostics(child: &mut Child) -> String {
+    let mut parts = Vec::new();
+    if let Ok(Some(status)) = child.try_wait() {
+        parts.push(format!("exit={:?}", status));
+    } else {
+        parts.push("Prozess läuft noch".to_string());
+    }
+    if let Some(p) = child.stdout.take() {
+        let s = read_pipe_excerpt(p);
+        if !s.trim().is_empty() {
+            parts.push(format!("stdout (letzte 1500 Zeichen):\n{}", s));
+        }
+    }
+    if let Some(p) = child.stderr.take() {
+        let s = read_pipe_excerpt(p);
+        if !s.trim().is_empty() {
+            parts.push(format!("stderr (letzte 1500 Zeichen):\n{}", s));
+        }
+    }
+    parts.join(". ")
 }
 
 /// Prüft die öffentliche /status-Readiness eines Binaries (Blackbox).
@@ -356,9 +479,7 @@ fn request_reply_harness_starts_processes() {
         .start_execution_engine()
         .expect("execution-engine start");
 
-    std::thread::sleep(Duration::from_secs(2));
-
-    // Echte Readiness: Prozesse laufen UND NATS Pub/Sub funktioniert
+    // Readiness bereits via /status-Poll in start_* sichergestellt
     assert!(
         harness.processes_are_running(),
         "NATS, market-data oder execution-engine sind bereits beendet"
