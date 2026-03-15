@@ -62,6 +62,7 @@ pub struct RequestReplyE2eHarness {
     _temp_dir: tempfile::TempDir,
     nats_config_path: PathBuf,
     nats_url: String,
+    nats_http_port: u16,
     nats_child: Option<Child>,
     market_data_child: Option<Child>,
     execution_engine_child: Option<Child>,
@@ -72,12 +73,13 @@ impl RequestReplyE2eHarness {
     pub fn new() -> Result<Self, String> {
         let temp_dir = tempfile::tempdir().map_err(|e| format!("tempdir: {}", e))?;
         let port = free_port()?;
+        let http_port = free_port()?;
         let nats_url = format!("nats://127.0.0.1:{}", port);
 
         let template_path = request_reply_fixtures_dir().join("nats_jetstream.conf");
         let template = fs::read_to_string(&template_path)
             .map_err(|e| format!("read nats template {}: {}", template_path.display(), e))?;
-        let config_content = format!("port: {}\n\n{}", port, template);
+        let config_content = format!("port: {}\nhttp_port: {}\n\n{}", port, http_port, template);
         let nats_config_path = temp_dir.path().join("nats.conf");
         fs::write(&nats_config_path, config_content)
             .map_err(|e| format!("write nats config: {}", e))?;
@@ -86,6 +88,7 @@ impl RequestReplyE2eHarness {
             _temp_dir: temp_dir,
             nats_config_path,
             nats_url,
+            nats_http_port: http_port,
             nats_child: None,
             market_data_child: None,
             execution_engine_child: None,
@@ -225,15 +228,53 @@ impl RequestReplyE2eHarness {
         &self.nats_url
     }
 
+    /// HTTP-Port des NATS-Monitorings (für /connz).
+    pub fn nats_http_port(&self) -> u16 {
+        self.nats_http_port
+    }
+
     /// Temp-Dir-Pfad (für Tests).
     pub fn temp_dir_path(&self) -> &Path {
         self._temp_dir.path()
     }
 }
 
-/// Echte Readiness-Prüfung: NATS-Verbindung + Pub/Sub funktioniert.
+/// Prüft, dass market-data und execution-engine tatsächlich mit NATS verbunden sind.
+/// Nutzt NATS-Monitoring /connz (Blackbox: öffentlich beobachtbar).
+fn verify_process_connections(http_port: u16, min_connections: u32) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{}/connz", http_port);
+    let body = reqwest::blocking::get(&url)
+        .map_err(|e| format!("connz GET: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("connz status: {}", e))?
+        .text()
+        .map_err(|e| format!("connz text: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("connz parse: {}", e))?;
+    let num = json
+        .get("num_connections")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_else(|| {
+            json.get("connections")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len() as u64)
+                .unwrap_or(0)
+        });
+    if num < min_connections as u64 {
+        return Err(format!(
+            "connz: {} Verbindungen, mindestens {} erwartet (market-data + execution-engine)",
+            num, min_connections
+        ));
+    }
+    Ok(())
+}
+
+/// Echte Readiness-Prüfung: Prozess-Verbindungen + NATS Pub/Sub funktioniert.
 /// Beweist, dass der Harness für spätere Request/Reply-Tests brauchbar ist.
-fn verify_harness_readiness(nats_url: &str) -> Result<(), String> {
+fn verify_harness_readiness(nats_url: &str, http_port: u16) -> Result<(), String> {
+    // Zuerst: market-data und execution-engine müssen verbunden sein
+    verify_process_connections(http_port, 2)?;
+
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))?;
     rt.block_on(async {
         let client = async_nats::connect(nats_url)
@@ -317,8 +358,8 @@ fn request_reply_harness_starts_processes() {
         harness.processes_are_running(),
         "NATS, market-data oder execution-engine sind bereits beendet"
     );
-    verify_harness_readiness(harness.nats_url())
-        .expect("Harness-Readiness: NATS Pub/Sub muss funktionieren");
+    verify_harness_readiness(harness.nats_url(), harness.nats_http_port())
+        .expect("Harness-Readiness: Prozess-Verbindungen + NATS Pub/Sub müssen funktionieren");
 
     harness.stop();
 }
