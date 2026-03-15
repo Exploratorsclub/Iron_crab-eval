@@ -2322,6 +2322,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "async-trait",
+ "futures",
  "ironcrab",
  "rust_decimal",
  "serde",

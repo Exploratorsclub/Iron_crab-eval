@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::Duration;
 
+use futures::StreamExt;
+
 /// Pfad zu Iron_crab (Geschwister-Ordner). Wie golden_replay_blackbox.rs.
 fn iron_crab_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -229,15 +231,48 @@ impl RequestReplyE2eHarness {
     }
 }
 
+/// Echte Readiness-Prüfung: NATS-Verbindung + Pub/Sub funktioniert.
+/// Beweist, dass der Harness für spätere Request/Reply-Tests brauchbar ist.
+fn verify_harness_readiness(nats_url: &str) -> Result<(), String> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("runtime: {}", e))?;
+    rt.block_on(async {
+        let client = async_nats::connect(nats_url)
+            .await
+            .map_err(|e| format!("connect: {}", e))?;
+        let mut sub = client
+            .subscribe("harness.readiness.test".to_string())
+            .await
+            .map_err(|e| format!("subscribe: {}", e))?;
+        client
+            .publish("harness.readiness.test".to_string(), "ping".into())
+            .await
+            .map_err(|e| format!("publish: {}", e))?;
+        let msg = tokio::time::timeout(Duration::from_secs(2), sub.next())
+            .await
+            .map_err(|_| "timeout: keine Nachricht empfangen")?
+            .ok_or("stream ended")?;
+        if msg.payload.as_ref() != b"ping" {
+            return Err(format!(
+                "falsche payload: {:?}",
+                String::from_utf8_lossy(msg.payload.as_ref())
+            ));
+        }
+        Ok(())
+    })
+}
+
 impl Drop for RequestReplyE2eHarness {
     fn drop(&mut self) {
         self.stop();
     }
 }
 
+/// Fehlertyp: nur "nats-server nicht gefunden" ist ein Skip-Grund.
+const SKIP_REASON: &str = "nats-server nicht gefunden";
+
 /// Minimaler Harness-Test: NATS starten, Verbindung prüfen, Cleanup.
 fn run_harness_nats_only() -> Result<(), String> {
-    find_nats_server().ok_or_else(|| "nats-server nicht gefunden".to_string())?;
+    find_nats_server().ok_or_else(|| SKIP_REASON.to_string())?;
 
     let mut harness = RequestReplyE2eHarness::new()?;
     harness.start_nats()?;
@@ -275,21 +310,27 @@ fn request_reply_harness_starts_processes() {
         .start_execution_engine()
         .expect("execution-engine start");
 
-    // Kurz warten, dann prüfen ob sie noch laufen
     std::thread::sleep(Duration::from_secs(2));
+
+    // Echte Readiness: Prozesse laufen UND NATS Pub/Sub funktioniert
     assert!(
         harness.processes_are_running(),
         "NATS, market-data oder execution-engine sind bereits beendet"
     );
+    verify_harness_readiness(harness.nats_url())
+        .expect("Harness-Readiness: NATS Pub/Sub muss funktionieren");
 
     harness.stop();
 }
 
 /// Test: Nur NATS (läuft wenn nats-server installiert ist).
+/// Skip nur wenn nats-server nicht gefunden; alle anderen Fehler schlagen fehl.
 #[test]
 fn request_reply_harness_nats_starts() {
-    if run_harness_nats_only().is_err() {
-        // nats-server nicht installiert – Skip
+    match run_harness_nats_only() {
+        Ok(()) => {}
+        Err(e) if e == SKIP_REASON => eprintln!("SKIP: {}", e),
+        Err(e) => panic!("NATS-Start/Config/Verbindung fehlgeschlagen: {}", e),
     }
 }
 
