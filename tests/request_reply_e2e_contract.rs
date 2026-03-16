@@ -1,7 +1,7 @@
 //! Request/Reply E2E Contract Test (I-24c, I-24d)
 //!
-//! On-Wire Blackbox-Test: ControlRequest → market-data → ControlResponse.
-//! Beweist den Request/Reply-Contract ohne Liquidation-E2E.
+//! On-Wire Blackbox-Test: Discovery-Request (PumpSwap pool_accounts) → market-data → ControlResponse.
+//! Beweist den Request/Reply-Contract fuer I-24d ohne Liquidation-E2E.
 //!
 //! STOP-CHECK: Nur Eval-Repo, kein Impl-Code, Blackbox an API-Grenze.
 
@@ -12,13 +12,16 @@ use std::time::Duration;
 
 use common::request_reply_e2e_harness::RequestReplyE2eHarness;
 use futures::StreamExt;
-use ironcrab::ipc::{ControlRequest, ControlRequestKind};
+use ironcrab::ipc::RecordHeader;
 use ironcrab::nats::topics::{TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES};
 
 /// Timeout für Response-Empfang (Sekunden).
 const RESPONSE_TIMEOUT_SECS: u64 = 15;
 
-/// Echter On-Wire Request/Reply Contract: Request publizieren, korrelierte Response prüfen.
+/// Absichtlich nicht auflösbare base_mint (PumpSwap Discovery liefert not_found).
+const UNRESOLVABLE_BASE_MINT: &str = "11111111111111111111111111111111";
+
+/// Echter On-Wire Request/Reply Contract: Discovery-Request publizieren, korrelierte Response prüfen.
 #[test]
 fn request_reply_contract_market_data_responds() {
     let iron_crab = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -52,16 +55,15 @@ fn request_reply_contract_market_data_responds() {
             .as_millis()
     );
 
-    // ControlRequest: target=market-data, absichtlich nicht auflösbar (ResetKillSwitch ist execution-engine)
-    let req = ControlRequest::new(
-        "ironcrab-eval",
-        "e2e-contract",
-        "run-e2e",
-        request_id.clone(),
-        "market-data",
-        ControlRequestKind::ResetKillSwitch,
-    );
-    let payload = serde_json::to_vec(&req).expect("serialize ControlRequest");
+    // Discovery-Request (PumpSwap pool_accounts): target=market-data, absichtlich nicht auflösbar
+    let header = RecordHeader::new("ironcrab-eval", "e2e-contract", "run-e2e");
+    let req = serde_json::json!({
+        "header": header,
+        "request_id": request_id,
+        "target": "market-data",
+        "kind": {"DiscoverPoolAccounts": {"base_mint": UNRESOLVABLE_BASE_MINT}}
+    });
+    let payload = serde_json::to_vec(&req).expect("serialize Discovery-Request");
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let result = rt.block_on(async {
@@ -79,39 +81,51 @@ fn request_reply_contract_market_data_responds() {
             .await
             .map_err(|e| format!("publish: {}", e))?;
 
-        let msg = tokio::time::timeout(Duration::from_secs(RESPONSE_TIMEOUT_SECS), sub.next())
-            .await
-            .map_err(|_| format!("timeout: keine Response nach {}s", RESPONSE_TIMEOUT_SECS))?
-            .ok_or("stream ended")?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(RESPONSE_TIMEOUT_SECS);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(format!(
+                    "timeout: keine korrelierte Response fuer request_id={:?} nach {}s",
+                    request_id, RESPONSE_TIMEOUT_SECS
+                ));
+            }
 
-        let body: serde_json::Value = serde_json::from_slice(msg.payload.as_ref())
-            .map_err(|e| format!("parse response: {}", e))?;
+            let msg = match tokio::time::timeout(remaining, sub.next()).await {
+                Ok(Some(m)) => m,
+                Ok(None) => return Err("stream ended".to_string()),
+                Err(_) => {
+                    return Err(format!(
+                        "timeout: keine korrelierte Response fuer request_id={:?} nach {}s",
+                        request_id, RESPONSE_TIMEOUT_SECS
+                    ));
+                }
+            };
 
-        let resp_request_id = body.get("request_id").and_then(|v| v.as_str());
-        let resp_target = body.get("target").and_then(|v| v.as_str());
-        let status = body
-            .get("status")
-            .or_else(|| body.get("outcome"))
-            .and_then(|v| v.as_str());
+            let body: serde_json::Value = match serde_json::from_slice(msg.payload.as_ref()) {
+                Ok(b) => b,
+                Err(_) => continue, // Keine gültige JSON-Response, weiter pollen
+            };
 
-        if resp_request_id != Some(request_id.as_str()) {
-            return Err(format!(
-                "request_id mismatch: expected {:?}, got {:?}",
-                request_id, resp_request_id
-            ));
-        }
-        if resp_target.map(|t| t != "market-data").unwrap_or(true) {
-            return Err(format!(
-                "target mismatch: expected market-data, got {:?}",
-                resp_target
-            ));
-        }
-        match status {
-            Some("ok") | Some("not_found") | Some("error") => Ok(()),
-            other => Err(format!(
-                "kein terminaler Outcome: expected ok|not_found|error, got {:?}",
-                other
-            )),
+            let resp_request_id = body.get("request_id").and_then(|v| v.as_str());
+            if resp_request_id != Some(request_id.as_str()) {
+                continue; // Andere request_id, weiter pollen
+            }
+
+            let resp_target = body.get("target").and_then(|v| v.as_str());
+            if resp_target.map(|t| t != "market-data").unwrap_or(true) {
+                continue; // Falscher target, weiter pollen
+            }
+
+            let status = body
+                .get("status")
+                .or_else(|| body.get("outcome"))
+                .and_then(|v| v.as_str());
+
+            match status {
+                Some("ok") | Some("not_found") | Some("error") => return Ok(()),
+                _ => continue, // Kein terminaler Outcome, weiter pollen
+            }
         }
     });
 
