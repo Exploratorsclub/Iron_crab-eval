@@ -200,9 +200,10 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 
 ### A.32 Cold Path pump_amm degenerate Reserves RPC-Fallback
 - **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
-- **Invariante:** Im Cold Path (allow_rpc_on_miss=true, z.B. Liquidation) muss `pump_amm` `quote_exact_in()` bei degenerate Cache-Reserves (eine Seite=0, amount_out=0) zum RPC-Fallback durchfallen statt `None` zurueckzugeben. Der Hot Path (allow_rpc_on_miss=false) darf weiterhin `None` zurueckgeben.
-- **Formal:** LivePoolCache hat PumpAmm mit base_reserve=Some(X), quote_reserve=Some(0) (oder umgekehrt). quote_exact_in(allow_rpc_on_miss=true) → darf NICHT Ok(None) zurueckgeben wenn on-chain beide Reserves > 0. quote_exact_in(allow_rpc_on_miss=false) → Ok(None) ist korrekt (Hot Path, kein RPC).
-- **Kontext:** Nach Restart werden PumpSwap AMM Pools mit (0,0) entdeckt. Vault-Balance-Updates kommen asynchron (eine Seite zuerst). Cache-HIT mit degenerate Reserves verhindert RPC-Fallback → LIQUIDATION SKIP fuer migrierte Token.
+- **Invariante:** Im Cold Path (allow_rpc_on_miss=true, z.B. Liquidation) muss `pump_amm` degenerate Cache-Reserves als Problem erkennen. Degenerierter State darf nicht still als "valider Quote-None-Fall" durchgehen.
+- **Formal:** (a) quote_output_amount mit base_reserve=0 oder quote_reserve=0 → Err. (b) Cold Path quote_exact_in mit degenerate Cache und RPC unreachable → Err (nicht Ok(None)). (c) Valide Reserves → Ok mit positivem amount_out.
+- **Getestet:** pumpamm_degenerate_cache_reserves_quote_zero_rejected; pumpamm_degenerate_cache_reserves_base_zero_rejected; pumpamm_valid_reserves_quote_succeeds; pumpamm_cold_path_degenerate_reserves_yields_err_not_ok_none; balance_updated_partial_base_only_preserves_value.
+- **Kontext:** Nach Restart werden PumpSwap AMM Pools mit (0,0) entdeckt. Vault-Balance-Updates kommen asynchron. Cache-HIT mit degenerate Reserves darf RPC-Fallback nicht still verhindern.
 
 ### A.38 Cold-Path Discovery nur per Request/Reply (I-24d)
 - **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
@@ -297,9 +298,10 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | I-27 | SSH/Server-Befehle nur wenn User explizit anfordert oder genehmigt. | — |
 
 ### A.33 PoolDiscovered darf pool_accounts im SLAVE Cache nicht ueberschreiben
-- **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs` (erweitert)
+- **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
 - **Invariante:** Wenn der SLAVE LivePoolCache bereits einen PumpAmm-Eintrag mit nicht-leeren pool_accounts hat und ein neues PoolDiscovered Event ohne pool_accounts (oder mit leeren) ankommt, muessen die bestehenden pool_accounts erhalten bleiben.
-- **Formal:** LivePoolCache.get(pool).pool_accounts = [14 Pubkeys]. apply_pool_cache_update(PoolDiscovered{pool, pool_accounts=[]}) → LivePoolCache.get(pool).pool_accounts == [14 Pubkeys] (unveraendert). Ebenso fuer creator.
+- **Formal:** apply_pool_cache_update(PoolDiscovered{pool_accounts}) → pool_accounts verfuegbar. apply_pool_cache_update(PoolDiscovered{metadata=None}) → pool_accounts unveraendert.
+- **Getestet:** a33_pool_discovered_without_accounts_preserves_existing.
 - **Kontext:** Root Cause von Bug #28: PoolDiscovered upsert loeschte pool_accounts, Liquidation scheiterte mit err_discovery.
 
 ### A.34 build_swap_ix muss base_token_program fuer Token-2022 korrekt setzen
@@ -311,9 +313,10 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Datei:** `tests/invariants_liquidation_flow.rs` (erweitert)
 - **Invariante:** Der Retry-Diagnostic-Scan im Liquidation-Job muss sowohl SPL Token als auch Token-2022 Accounts per `getTokenAccountsByOwner` abfragen, analog zur initialen Scan-Phase.
 
-### A.36 discover_pool_static muss bekannte Pool-Adressen per getAccount nutzen
-- **Datei:** `tests/invariants_hot_path_no_rpc.rs` (erweitert)
-- **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt (auch ohne pool_accounts), muss `discover_pool_static` zuerst einen einzelnen `getAccount` Call fuer diese bekannte Adresse versuchen, bevor auf den langsamen `getProgramAccounts`-Scan zurueckgefallen wird. Der `getProgramAccounts`-Scan ist nur noch Last-Resort fuer komplett unbekannte Pools.
+### A.36 Bekannte Pool-Adresse = enger Pfad vor globalem Scan
+- **Datei:** `tests/invariants_hot_path_no_rpc.rs` (geplant)
+- **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt, muss der Recovery-/Discovery-Pfad den bekannten Pool gezielt behandeln. Globaler Scan ist nur Last-Resort fuer komplett unbekannte Pools.
+- **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
 
 ### A.37-A.40 zurueckgezogen
 - Die zuvor vorgeschlagenen Invarianten A.37-A.40 wurden **nicht** als aktive Eval-Invarianten uebernommen.
