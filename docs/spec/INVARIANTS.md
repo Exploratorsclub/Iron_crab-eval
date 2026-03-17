@@ -220,6 +220,14 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Getestet:** pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure.
 - **Kontext:** Bug #25 (cashback_enabled defaults to false → falsches Layout → Custom(6024) Overflow). Getrennt von I-24d (PumpSwap pool_accounts Request/Reply). Layout-Baustein (cashback=true → 16 Accounts) bereits in A.23/A.29 abgedeckt.
 
+### A.42 Cross-DEX Cold-Path Reserve-Fallback (Raydium, RaydiumCpmm, MeteoraDlmm)
+- **Datei:** `tests/invariants_cross_dex_cold_path_reserves.rs`
+- **Invariante:** Bekannter Pool + fehlende Live-Reserves im Cold Path = autoritativer RPC-Fallback oder klarer Failure. Wenn fuer einen bereits bekannten Pool die Reserve-/Vault-Daten im LivePoolCache fehlen, darf der Cold Path den Fall nicht still wie einen harmlosen Cache-Miss behandeln. Er muss entweder den autoritativen Reserve-State per RPC nachladen oder einen klaren Fehler (Err) liefern. Nicht erlaubt: stilles Ok(None) oder verdeckter lokaler Ersatz-Truth.
+- **Formal:** Cold Path (allow_rpc_on_miss=true), bekannter Pool, fehlende Reserves, RPC unreachable → Err (nicht Ok(None)).
+- **Getestet:** raydium_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; raydium_cpmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; meteora_dlmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err.
+- **Scope:** Nur Raydium, RaydiumCpmm, MeteoraDlmm. Orca nicht. Hot Path bleibt GEYSER-ONLY (A.12). Kein Overclaim ueber Request/Reply, PumpFun, Orca oder komplettes IX-Layout.
+- **Kontext:** I-5/I-6 Cold-Path-Leitlinie; A.12 Gegenkontext (Hot Path RPC-frei).
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
