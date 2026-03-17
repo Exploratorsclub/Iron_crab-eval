@@ -212,6 +212,13 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **On-Wire Contract (I-24d PumpSwap):** `tests/request_reply_e2e_contract.rs`: EnsurePumpAmmPoolAccounts (base_mint) → market-data → korrelierte Response. Test pollt bounded auf TOPIC_CONTROL_RESPONSES und filtert nach request_id; erwartet terminalen Outcome (ok|not_found|error). Beweist nur den PumpSwap pool_accounts Request/Reply-Contract; Externer Fehler weiterhin ueber RPC unreachable approximiert.
 - **Kontext:** I-24d; Cold Path darf nur ueber market-data pool_accounts erhalten.
 
+### A.41 PumpFun Bonding Curve Cold-Path: Stale Cache darf nicht blind dominieren
+- **Datei:** `tests/invariants_liquidation_flow.rs`
+- **Invariante:** Im Cold Path (allow_rpc_fallback=true) fuer eine **aktive** PumpFun Bonding Curve (complete=false): Ein Cache-HIT mit cashback_enabled=false darf NICHT blind vertraut werden. Wenn RPC unreachable ist, muss der Outcome ein klarer Failure (Err) sein – NICHT stilles Ok mit falschem 15-Account-Layout.
+- **Formal:** build_swap_ix_async_with_slippage(allow_rpc_fallback=true) mit Cache(PumpFunState{complete=false, cashback_enabled=false}) und RPC unreachable → Err.
+- **Getestet:** pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure.
+- **Kontext:** Bug #25 (cashback_enabled defaults to false → falsches Layout → Custom(6024) Overflow). Getrennt von I-24d (PumpSwap pool_accounts Request/Reply). Layout-Baustein (cashback=true → 16 Accounts) bereits in A.23/A.29 abgedeckt.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
