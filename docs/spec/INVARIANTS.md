@@ -198,13 +198,6 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** build_swap_ix_async_with_slippage(allow_rpc_fallback=true) fuer Token mit on-chain cashback_enabled=true → Instruction hat 16 Accounts (mit user_volume_accumulator), unabhaengig vom Cache-Wert.
 - **Kontext:** JetStream-Cache liefert cashback_enabled=false (nicht im Metadata), Cache-HIT verhindert RPC-Fallback → falsches Account-Layout → Overflow(6024).
 
-### A.39 PumpFun Bonding Curve Cold-Path Liquidation (getrennt von I-24d, PumpSwap)
-- **Datei:** `tests/invariants_liquidation_flow.rs`
-- **Invariante:** PumpFun Bonding Curve Cold Path = korrekter Venue-State oder klarer Failure. Wenn execution-engine im Cold Path eine PumpFun-Bonding-Curve-Position liquidiert, darf sie keinen stale oder unvollstaendigen Venue-State blind aus Cache-Heuristiken als Truth verwenden, wenn dadurch ein falsches SELL-Layout entsteht.
-- **Formal:** (a) Aktive PumpFun Bonding Curve + cashback_enabled=true → Cold Path SELL hat 16 Accounts (erweitertes Layout). (b) Stale Cache (cashback_enabled=false) + RPC unreachable → Err (klarer Failure), NICHT stilles Ok mit 15-Account-Layout. (c) Kein verdeckter Erfolg durch lokale Ersatz-Truth.
-- **Getestet:** pumpfun_cold_path_cashback_true_produces_extended_layout; pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure.
-- **Kontext:** Bug #25 (cashback_enabled defaults to false → falsches Layout → Custom(6024) Overflow); Bug #21 (fehlendes bonding_curve_v2); Bug #18 (Cold Path darf RPC verwenden, Verhalten muss klar bleiben). Getrennt von I-24d (PumpSwap pool_accounts Request/Reply).
-
 ### A.32 Cold Path pump_amm degenerate Reserves RPC-Fallback
 - **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
 - **Invariante:** Im Cold Path (allow_rpc_on_miss=true, z.B. Liquidation) muss `pump_amm` `quote_exact_in()` bei degenerate Cache-Reserves (eine Seite=0, amount_out=0) zum RPC-Fallback durchfallen statt `None` zurueckzugeben. Der Hot Path (allow_rpc_on_miss=false) darf weiterhin `None` zurueckgeben.
@@ -218,6 +211,13 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Getestet:** i24d_missing_pool_accounts_no_local_healing; i24d_authoritative_update_makes_state_available; i24d_after_authoritative_update_retry_can_proceed; i24d_not_found_clear_failure; i24d_external_failure_clear_failure.
 - **On-Wire Contract (I-24d PumpSwap):** `tests/request_reply_e2e_contract.rs`: EnsurePumpAmmPoolAccounts (base_mint) → market-data → korrelierte Response. Test pollt bounded auf TOPIC_CONTROL_RESPONSES und filtert nach request_id; erwartet terminalen Outcome (ok|not_found|error). Beweist nur den PumpSwap pool_accounts Request/Reply-Contract; Externer Fehler weiterhin ueber RPC unreachable approximiert.
 - **Kontext:** I-24d; Cold Path darf nur ueber market-data pool_accounts erhalten.
+
+### A.41 PumpFun Bonding Curve Cold-Path: Stale Cache darf nicht blind dominieren
+- **Datei:** `tests/invariants_liquidation_flow.rs`
+- **Invariante:** Im Cold Path (allow_rpc_fallback=true) fuer eine **aktive** PumpFun Bonding Curve (complete=false): Ein Cache-HIT mit cashback_enabled=false darf NICHT blind vertraut werden. Wenn RPC unreachable ist, muss der Outcome ein klarer Failure (Err) sein – NICHT stilles Ok mit falschem 15-Account-Layout.
+- **Formal:** build_swap_ix_async_with_slippage(allow_rpc_fallback=true) mit Cache(PumpFunState{complete=false, cashback_enabled=false}) und RPC unreachable → Err.
+- **Getestet:** pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure (derzeit #[ignore] bis Iron_crab Cold-Path RPC-Verifikation fuer cashback_enabled implementiert).
+- **Kontext:** Bug #25 (cashback_enabled defaults to false → falsches Layout → Custom(6024) Overflow). Getrennt von I-24d (PumpSwap pool_accounts Request/Reply). Layout-Baustein (cashback=true → 16 Accounts) bereits in A.23/A.29 abgedeckt.
 
 ---
 
