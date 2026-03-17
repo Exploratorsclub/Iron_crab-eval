@@ -1,6 +1,6 @@
 //! Request/Reply E2E Contract Test (I-24c, I-24d)
 //!
-//! On-Wire Blackbox-Test: Discovery-Request (PumpSwap pool_accounts) → market-data → ControlResponse.
+//! On-Wire Blackbox-Test: EnsurePumpAmmPoolAccounts (PumpSwap pool_accounts) → market-data → ControlResponse.
 //! Beweist den Request/Reply-Contract fuer I-24d ohne Liquidation-E2E.
 //!
 //! STOP-CHECK: Nur Eval-Repo, kein Impl-Code, Blackbox an API-Grenze.
@@ -18,10 +18,10 @@ use ironcrab::nats::topics::{TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES};
 /// Timeout für Response-Empfang (Sekunden).
 const RESPONSE_TIMEOUT_SECS: u64 = 15;
 
-/// Absichtlich nicht auflösbare base_mint (PumpSwap Discovery liefert not_found).
+/// Absichtlich nicht auflösbare base_mint (EnsurePumpAmmPoolAccounts liefert not_found).
 const UNRESOLVABLE_BASE_MINT: &str = "11111111111111111111111111111111";
 
-/// Echter On-Wire Request/Reply Contract: Discovery-Request publizieren, korrelierte Response prüfen.
+/// Echter On-Wire Request/Reply Contract: EnsurePumpAmmPoolAccounts publizieren, korrelierte Response prüfen.
 #[test]
 fn request_reply_contract_market_data_responds() {
     let iron_crab = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -55,15 +55,15 @@ fn request_reply_contract_market_data_responds() {
             .as_millis()
     );
 
-    // Discovery-Request (PumpSwap pool_accounts): target=market-data, absichtlich nicht auflösbar
+    // EnsurePumpAmmPoolAccounts (PumpSwap pool_accounts): target=market-data, absichtlich nicht auflösbar
     let header = RecordHeader::new("ironcrab-eval", "e2e-contract", "run-e2e");
     let req = serde_json::json!({
         "header": header,
         "request_id": request_id,
         "target": "market-data",
-        "kind": {"DiscoverPoolAccounts": {"base_mint": UNRESOLVABLE_BASE_MINT}}
+        "kind": {"EnsurePumpAmmPoolAccounts": {"base_mint": UNRESOLVABLE_BASE_MINT}}
     });
-    let payload = serde_json::to_vec(&req).expect("serialize Discovery-Request");
+    let payload = serde_json::to_vec(&req).expect("serialize EnsurePumpAmmPoolAccounts");
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let result = rt.block_on(async {
