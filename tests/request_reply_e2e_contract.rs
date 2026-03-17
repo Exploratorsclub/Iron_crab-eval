@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use common::request_reply_e2e_harness::RequestReplyE2eHarness;
 use futures::StreamExt;
-use ironcrab::ipc::RecordHeader;
+use ironcrab::ipc::{ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus};
 use ironcrab::nats::topics::{TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES};
 
 /// Timeout für Response-Empfang (Sekunden).
@@ -56,13 +56,17 @@ fn request_reply_contract_market_data_responds() {
     );
 
     // EnsurePumpAmmPoolAccounts (PumpSwap pool_accounts): target=market-data, absichtlich nicht auflösbar
-    let header = RecordHeader::new("ironcrab-eval", "e2e-contract", "run-e2e");
-    let req = serde_json::json!({
-        "header": header,
-        "request_id": request_id,
-        "target": "market-data",
-        "kind": {"EnsurePumpAmmPoolAccounts": {"base_mint": UNRESOLVABLE_BASE_MINT}}
-    });
+    let kind = ControlRequestKind::EnsurePumpAmmPoolAccounts {
+        base_mint: UNRESOLVABLE_BASE_MINT.to_string(),
+    };
+    let req = ControlRequest::new(
+        "ironcrab-eval",
+        "e2e-contract",
+        "run-e2e",
+        request_id.clone(),
+        "market-data",
+        kind,
+    );
     let payload = serde_json::to_vec(&req).expect("serialize EnsurePumpAmmPoolAccounts");
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -102,29 +106,22 @@ fn request_reply_contract_market_data_responds() {
                 }
             };
 
-            let body: serde_json::Value = match serde_json::from_slice(msg.payload.as_ref()) {
-                Ok(b) => b,
-                Err(_) => continue, // Keine gültige JSON-Response, weiter pollen
+            let resp: ControlResponse = match serde_json::from_slice(msg.payload.as_ref()) {
+                Ok(r) => r,
+                Err(_) => continue, // Keine gültige ControlResponse, weiter pollen
             };
 
-            let resp_request_id = body.get("request_id").and_then(|v| v.as_str());
-            if resp_request_id != Some(request_id.as_str()) {
+            if resp.request_id != request_id {
                 continue; // Andere request_id, weiter pollen
             }
-
-            let resp_target = body.get("target").and_then(|v| v.as_str());
-            if resp_target.map(|t| t != "market-data").unwrap_or(true) {
+            if resp.target != "market-data" {
                 continue; // Falscher target, weiter pollen
             }
 
-            let status = body
-                .get("status")
-                .or_else(|| body.get("outcome"))
-                .and_then(|v| v.as_str());
-
-            match status {
-                Some("ok") | Some("not_found") | Some("error") => return Ok(()),
-                _ => continue, // Kein terminaler Outcome, weiter pollen
+            match resp.status {
+                ControlResponseStatus::Ok
+                | ControlResponseStatus::NotFound
+                | ControlResponseStatus::Error => return Ok(()),
             }
         }
     });
