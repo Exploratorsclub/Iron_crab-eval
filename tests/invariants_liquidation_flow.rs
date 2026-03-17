@@ -5,6 +5,10 @@
 //! golden_replay_liquidation_6005_retry getestet.
 //!
 //! A.29: Liquidation Vollständigkeit – build_sell_ix Account-Layout, count mit Locks.
+//!
+//! PumpFun Bonding Curve Cold-Path (A.31, A.39): Stale Cache darf nicht blind dominieren.
+//! cashback_enabled muss im Cold Path per RPC verifiziert werden; falsches Layout
+//! (15 Accounts bei cashback=true) führt zu Custom(6024) Overflow (Bug #25).
 
 use ironcrab::execution::live_pool_cache::{
     create_shared_cache, CachedPoolState, PumpAmmState, PumpFunState, SharedLivePoolCache,
@@ -203,4 +207,107 @@ fn liquidation_non_cashback_account_layout_15() {
         15,
         "PumpFun SELL with cashback_enabled=false must have 15 accounts"
     );
+}
+
+// --- PumpFun Bonding Curve Cold-Path (A.31, A.39) ---
+//
+// Stale Cache darf nicht blind dominieren. Wenn Cache cashback_enabled=false hat,
+// darf der Cold Path NICHT still erfolgreich ein 15-Account-Layout liefern, wenn
+// on-chain cashback_enabled=true wäre. Entweder: RPC-Verifikation → korrektes Layout,
+// oder: klarer Failure (Err).
+
+/// Cache mit PumpFun-State (cashback_enabled=false) – simuliert stale JetStream-Cache.
+fn setup_cache_with_pumpfun_stale_cashback() -> (SharedLivePoolCache, Pubkey, Pubkey) {
+    let cache = create_shared_cache();
+    let token_mint = Pubkey::new_unique();
+    let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
+    let associated_bonding_curve = Pubkey::new_from_array([4u8; 32]);
+    let creator = Pubkey::new_from_array([5u8; 32]);
+
+    let state = CachedPoolState::PumpFun(PumpFunState {
+        token_mint,
+        bonding_curve,
+        associated_bonding_curve,
+        virtual_sol_reserves: 100_000_000,
+        virtual_token_reserves: 1_000_000_000,
+        real_sol_reserves: 100_000_000,
+        real_token_reserves: 1_000_000_000,
+        complete: true,
+        creator,
+        cashback_enabled: false, // Stale: JetStream hatte kein cashback_enabled im Metadata
+    });
+
+    cache.upsert(bonding_curve, state, 0);
+    (cache, bonding_curve, token_mint)
+}
+
+/// A.31/A.39: Stale Cache (cashback_enabled=false) + Cold Path (allow_rpc_fallback=true)
+/// + RPC unreachable → klarer Failure (Err), NICHT stilles Ok mit falschem 15-Account-Layout.
+/// Beweist: Cache-HIT mit cashback_enabled=false wird im Cold Path nicht blind vertraut.
+#[tokio::test]
+async fn pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure() {
+    let (cache, _bonding_curve, token_mint) = setup_cache_with_pumpfun_stale_cashback();
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let mut dex = PumpFunDex::new(rpc, Some(cache)).expect("PumpFunDex::new");
+    let wallet = Pubkey::from_str("Ase7z1mRLps2cTNQnRHpLyQL4Q5FHwonjmZnYCTuUDZM").expect("wallet");
+    dex.set_user_authority(wallet);
+
+    let result = dex
+        .build_swap_ix_async_with_slippage(
+            &token_mint.to_string(),
+            WSOL_MINT,
+            1_000_000,
+            100,
+            None,
+            500,
+            None,
+            false,
+            true, // allow_rpc_fallback: Cold Path
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "A.31/A.39: Cold Path mit stale Cache (cashback=false) und RPC unreachable \
+         muss Err liefern, nicht stilles Ok mit falschem 15-Account-Layout"
+    );
+}
+
+/// A.39: Aktive PumpFun Bonding Curve + korrektes cashback_enabled → erweitertes Layout.
+/// build_sell_ix(cashback_enabled=true) liefert 16 Accounts (user_volume_accumulator + bonding_curve_v2).
+/// Verhindert Bug #25: falsches Layout bei cashback → Custom(6024) Overflow.
+#[test]
+fn pumpfun_cold_path_cashback_true_produces_extended_layout() {
+    let pumpfun = setup_pumpfun_dex();
+    let token_mint = Pubkey::new_unique();
+    let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
+    let associated_bonding_curve = Pubkey::new_unique();
+    let user_token_account = Pubkey::new_unique();
+    let creator = Pubkey::new_unique();
+    let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID).unwrap();
+
+    let ix = pumpfun
+        .build_sell_ix(
+            &token_mint,
+            &bonding_curve,
+            &associated_bonding_curve,
+            &user_token_account,
+            &creator,
+            &token_program,
+            1_000_000,
+            100,
+            true, // cashback_enabled = true → erweitertes Layout
+        )
+        .expect("build_sell_ix should succeed");
+
+    assert_eq!(
+        ix.accounts.len(),
+        16,
+        "A.39: PumpFun Cold Path SELL mit cashback_enabled=true muss 16 Accounts haben \
+         (user_volume_accumulator + bonding_curve_v2), nicht 15"
+    );
+
+    let last = ix.accounts.last().unwrap();
+    assert!(!last.is_signer, "bonding_curve_v2 is not signer");
+    assert!(!last.is_writable, "bonding_curve_v2 is readonly");
 }

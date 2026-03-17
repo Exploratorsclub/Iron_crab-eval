@@ -198,6 +198,13 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Formal:** build_swap_ix_async_with_slippage(allow_rpc_fallback=true) fuer Token mit on-chain cashback_enabled=true → Instruction hat 16 Accounts (mit user_volume_accumulator), unabhaengig vom Cache-Wert.
 - **Kontext:** JetStream-Cache liefert cashback_enabled=false (nicht im Metadata), Cache-HIT verhindert RPC-Fallback → falsches Account-Layout → Overflow(6024).
 
+### A.39 PumpFun Bonding Curve Cold-Path Liquidation (getrennt von I-24d, PumpSwap)
+- **Datei:** `tests/invariants_liquidation_flow.rs`
+- **Invariante:** PumpFun Bonding Curve Cold Path = korrekter Venue-State oder klarer Failure. Wenn execution-engine im Cold Path eine PumpFun-Bonding-Curve-Position liquidiert, darf sie keinen stale oder unvollstaendigen Venue-State blind aus Cache-Heuristiken als Truth verwenden, wenn dadurch ein falsches SELL-Layout entsteht.
+- **Formal:** (a) Aktive PumpFun Bonding Curve + cashback_enabled=true → Cold Path SELL hat 16 Accounts (erweitertes Layout). (b) Stale Cache (cashback_enabled=false) + RPC unreachable → Err (klarer Failure), NICHT stilles Ok mit 15-Account-Layout. (c) Kein verdeckter Erfolg durch lokale Ersatz-Truth.
+- **Getestet:** pumpfun_cold_path_cashback_true_produces_extended_layout; pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure.
+- **Kontext:** Bug #25 (cashback_enabled defaults to false → falsches Layout → Custom(6024) Overflow); Bug #21 (fehlendes bonding_curve_v2); Bug #18 (Cold Path darf RPC verwenden, Verhalten muss klar bleiben). Getrennt von I-24d (PumpSwap pool_accounts Request/Reply).
+
 ### A.32 Cold Path pump_amm degenerate Reserves RPC-Fallback
 - **Datei:** `tests/invariants_pumpswap_amm_liquidation.rs`
 - **Invariante:** Im Cold Path (allow_rpc_on_miss=true, z.B. Liquidation) muss `pump_amm` `quote_exact_in()` bei degenerate Cache-Reserves (eine Seite=0, amount_out=0) zum RPC-Fallback durchfallen statt `None` zurueckzugeben. Der Hot Path (allow_rpc_on_miss=false) darf weiterhin `None` zurueckgeben.
