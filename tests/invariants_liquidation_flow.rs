@@ -247,10 +247,7 @@ fn setup_cache_with_pumpfun_stale_cashback() -> (SharedLivePoolCache, Pubkey, Pu
 /// + Cold Path (allow_rpc_fallback=true) + RPC unreachable → klarer Failure (Err),
 /// NICHT stilles Ok mit falschem 15-Account-Layout.
 /// Beweist: Cache-HIT mit cashback_enabled=false wird im Cold Path nicht blind vertraut.
-///
-/// Ignoriert bis Iron_crab Cold-Path RPC-Verifikation fuer cashback_enabled implementiert.
 #[tokio::test]
-#[ignore = "Impl muss allow_rpc_fallback=true: cashback per RPC verifizieren, nicht Cache blind nutzen"]
 async fn pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure() {
     let (cache, _bonding_curve, token_mint) = setup_cache_with_pumpfun_stale_cashback();
     let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
