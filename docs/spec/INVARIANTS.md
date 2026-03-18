@@ -326,6 +326,11 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt, muss der Recovery-/Discovery-Pfad den bekannten Pool gezielt behandeln. Globaler Scan ist nur Last-Resort fuer komplett unbekannte Pools.
 - **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
 
+### Orca Cold Path (geplant, NICHT Eval-getestet)
+- **Ziel-Invariante:** Bekannter Orca-Pool + gesetzter LivePoolCache + fehlende/unbrauchbare Live-Reserves + Cold-Path-Aktivierung + RPC unreachable => Err (nicht stilles Ok(None)).
+- **Luecke:** Der gemergte Fix (PR #20) haertet den spezifischen Cold Path mit **gesetztem** LivePoolCache und fehlenden Reserves. Orca hat aktuell kein `allow_rpc_on_miss` im Konstruktor (im Gegensatz zu Raydium/RaydiumCpmm/Meteora). Der Contract ist an der `quote_exact_in`-API-Grenze ohne diesen Parameter nicht beobachtbar. Ein Blackbox-Test erfordert entweder die gemergte API (allow_rpc_on_miss o.ae.) oder einen anderen Test-Einstiegspunkt.
+- **Nicht** als aktive Eval-Invariante gefuehrt; kein ignorierten Schein-Test.
+
 ### A.37-A.40 zurueckgezogen
 - Die zuvor vorgeschlagenen Invarianten A.37-A.40 wurden **nicht** als aktive Eval-Invarianten uebernommen.
 - Grund: Der dazu erstellte Testansatz basierte ueberwiegend auf Source-Code-Scans und Regex-/String-Matching gegen das Impl-Repo statt auf belastbaren Verhaltens- oder Blackbox-Tests.
