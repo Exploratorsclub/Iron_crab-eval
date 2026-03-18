@@ -2,10 +2,14 @@
 //!
 //! DEX-Connectors mit allow_rpc_on_miss=false (bzw. live_pool_cache bei Orca) liefern bei
 //! Cache-Miss None/Err ohne RPC. Hot Path (Arb, Momentum) darf keine blockierenden RPC-Calls.
+//!
+//! Zusaetzlich: Orca Cold Path (INVARIANTS.md A.43): Bekannter Pool + fehlende Live-Reserves
+//! im Cold Path + RPC unreachable => klarer Fehler (Err), nicht stilles Ok(None).
 
 use ironcrab::execution::live_pool_cache::LivePoolCache;
 use ironcrab::solana::dex::meteora_dlmm::MeteoraDlmm;
 use ironcrab::solana::dex::orca::Orca;
+use ironcrab::solana::dex::orca_whirlpool_layout::WhirlpoolParsed;
 use ironcrab::solana::dex::pumpfun_amm::PumpFunAmmDex;
 use ironcrab::solana::dex::raydium::Raydium;
 use ironcrab::solana::dex::raydium_cpmm::RaydiumCpmm;
@@ -179,4 +183,48 @@ async fn orca_quote_cache_miss_no_rpc() {
     assert!(result.is_ok());
     let quote = result.unwrap();
     assert!(quote.is_none());
+}
+
+/// Orca Cold Path (A.43): Bekannter Pool + fehlende Live-Reserves + RPC unreachable => Err.
+///
+/// Wenn fuer einen bereits bekannten Orca-Pool die autoritativen Live-Reserves aus dem
+/// LivePoolCache fehlen (live_pool_cache=None, Cold Path), muss der RPC-Fallback versucht werden.
+/// RPC unreachable => klarer Fehler (Err), nicht stilles Ok(None).
+///
+/// Gegenkontext: Hot Path (A.12) bleibt unberuehrt; dieser Test ist nur Cold-Path.
+///
+/// Ignoriert bis Orca-Cold-Path-Fix in ironcrab implementiert ist (allow_rpc_on_miss o.ae.).
+#[tokio::test]
+#[ignore = "Orca Cold Path: ironcrab liefert noch Ok(None) statt Err bei RPC unreachable; Fix pending"]
+async fn orca_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err() {
+    let rpc = Arc::new(SolanaRpc::new(DUMMY_RPC));
+    // Cold Path: live_pool_cache=None => RPC-Fallback erlaubt
+    let orca = Orca::new_with_cache(rpc, None, None);
+
+    let base_mint = Pubkey::new_unique();
+    let quote_mint = Pubkey::from_str(WSOL_MINT).unwrap();
+    let whirlpool_id = Pubkey::new_unique();
+    let parsed = WhirlpoolParsed {
+        token_mint_a: base_mint,
+        token_mint_b: quote_mint,
+        token_vault_a: Pubkey::new_unique(),
+        token_vault_b: Pubkey::new_unique(),
+        fee_rate: 300,
+        protocol_fee_rate: 0,
+        tick_spacing: 64,
+        tick_current_index: 0,
+        liquidity: 1,
+        sqrt_price: 1,
+    };
+    orca.insert_whirlpool_parsed(whirlpool_id, parsed);
+
+    let result = orca
+        .quote_exact_in(&base_mint.to_string(), &quote_mint.to_string(), 1_000_000)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Cold Path: bekannter Pool + fehlende Live-Reserves + RPC unreachable muss Err liefern, \
+         nicht stilles Ok(None)"
+    );
 }
