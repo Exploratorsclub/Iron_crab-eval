@@ -228,14 +228,6 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Scope:** Nur Raydium, RaydiumCpmm, MeteoraDlmm. Orca nicht. Hot Path bleibt GEYSER-ONLY (A.12). Kein Overclaim ueber Request/Reply, PumpFun, Orca oder komplettes IX-Layout.
 - **Kontext:** I-5/I-6 Cold-Path-Leitlinie; A.12 Gegenkontext (Hot Path RPC-frei).
 
-### A.43 Orca Cold-Path: Bekannter Pool + fehlende Live-Reserves + RPC unreachable => Err
-- **Datei:** `tests/invariants_hot_path_no_rpc.rs`
-- **Invariante:** Wenn fuer einen bereits bekannten Orca-Pool die autoritativen Live-Reserves aus dem LivePoolCache fehlen oder unbrauchbar sind, darf der Cold Path den Fall nicht still wie einen harmlosen Hot-Path-/Mock-Fall behandeln. Stattdessen muss ein autoritativer RPC-Fallback versucht werden; wenn RPC nicht verfuegbar ist, muss der Outcome ein klarer Fehler (Err) sein.
-- **Formal:** Cold Path (live_pool_cache=None), bekannter Pool, fehlende Live-Reserves, RPC unreachable → Err (nicht Ok(None)).
-- **Getestet:** orca_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err (derzeit #[ignore] bis Orca-Cold-Path-Fix in ironcrab).
-- **Scope:** Nur Orca. Nicht A.12 (Hot Path), nicht A.42 (Raydium/RaydiumCpmm/Meteora). Kein Router-/Best-Quote-/Request-Reply-Overclaim.
-- **Kontext:** I-4, I-5, I-6, I-16; neu gefixten Orca-Cold-Path absichern.
-
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
@@ -333,6 +325,11 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Datei:** `tests/invariants_hot_path_no_rpc.rs` (geplant)
 - **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt, muss der Recovery-/Discovery-Pfad den bekannten Pool gezielt behandeln. Globaler Scan ist nur Last-Resort fuer komplett unbekannte Pools.
 - **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
+
+### Orca Cold Path (geplant, NICHT Eval-getestet)
+- **Ziel-Invariante:** Bekannter Orca-Pool + gesetzter LivePoolCache + fehlende/unbrauchbare Live-Reserves + Cold-Path-Aktivierung + RPC unreachable => Err (nicht stilles Ok(None)).
+- **Luecke:** Der gemergte Fix (PR #20) haertet den spezifischen Cold Path mit **gesetztem** LivePoolCache und fehlenden Reserves. Orca hat aktuell kein `allow_rpc_on_miss` im Konstruktor (im Gegensatz zu Raydium/RaydiumCpmm/Meteora). Der Contract ist an der `quote_exact_in`-API-Grenze ohne diesen Parameter nicht beobachtbar. Ein Blackbox-Test erfordert entweder die gemergte API (allow_rpc_on_miss o.ae.) oder einen anderen Test-Einstiegspunkt.
+- **Nicht** als aktive Eval-Invariante gefuehrt; kein ignorierten Schein-Test.
 
 ### A.37-A.40 zurueckgezogen
 - Die zuvor vorgeschlagenen Invarianten A.37-A.40 wurden **nicht** als aktive Eval-Invarianten uebernommen.
