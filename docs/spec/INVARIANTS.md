@@ -213,6 +213,14 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **On-Wire Contract (I-24d PumpSwap):** `tests/request_reply_e2e_contract.rs`: EnsurePumpAmmPoolAccounts (base_mint) → market-data → korrelierte Response. Test pollt bounded auf TOPIC_CONTROL_RESPONSES und filtert nach request_id; erwartet terminalen Outcome (ok|not_found|error). Beweist nur den PumpSwap pool_accounts Request/Reply-Contract; Externer Fehler weiterhin ueber RPC unreachable approximiert.
 - **Kontext:** I-24d; Cold Path darf nur ueber market-data pool_accounts erhalten.
 
+### A.43 PumpSwap Cold-Path Recovery: force_refresh und pool_address_hint (I-24e)
+- **Dateien:** `tests/invariants_pumpswap_amm_liquidation.rs`, `tests/ipc_schema_serde.rs`
+- **Invariante A (Recovery vs. stale Cache):** Loest die Cold-Path-Recovery nach strukturellem PumpSwap-Simulationsfehler einen Pfad mit `force_refresh` aus, darf dieselbe stale 14er-`pool_accounts`-Liste aus dem SLAVE LivePoolCache nicht unveraendert als Truth zurueckkommen (kein stilles cache-first Wiederverwenden). Hot-Path-Dex (`allow_rpc_on_miss=false`) darf bei `force_refresh` weder Cache noch RPC nutzen — beobachtbar als Ok(None).
+- **Invariante B (Hint-Pfad):** Der explizite Pool-Hint aus dem Intent-Modell (`TradeIntent.resources.pools[0]`) wird auf dem Wire-Contract als `ControlRequest.pool_address_hint` gefuehrt (nicht im Enum-Variant-Shape). Ein ungueltiger Hint darf nicht in einen unbounded globalen Discovery-Scan ausweichen — beobachtbar: Fehler nach kurzem Timeout.
+- **Blackbox-Grenze:** Die Priorisierung „Intent `pools[0]` vor Cache-Lookup“ in der execution-engine ist ohne E2E-Harness (Intent → korreliertes `EnsurePumpAmmPoolAccounts`) nicht separat von der API `pool_accounts_v1_for_base_mint_with_hint` abgegrenzt; der Wire-Vertrag fuer `pool_address_hint` + `force_refresh` ist in `ipc_schema_serde` abgesichert. Vollstaendige End-to-End-Prioritaet engine-intern: offene Luecke bis ein Blackbox-Einstieg (z.B. erweiterter E2E-Contract) existiert.
+- **Getestet:** i24e_force_refresh_skips_stale_livepool_cache_pool_accounts; i24e_force_refresh_refuses_without_cold_path_rpc_permission; i24e_pool_address_hint_parse_fail_errors_without_global_scan; control_request_ensure_pump_amm_pool_accounts_force_refresh_and_pool_hint_roundtrip.
+- **Kontext:** PR #31 Merge auf architecture-rebuild; Hot-Path-async-Refresh fuer reguläre Sells bleibt explizit out-of-scope (kein Overclaim in diesen Tests).
+
 ### A.41 PumpFun Bonding Curve Cold-Path: Stale Cache darf nicht blind dominieren
 - **Datei:** `tests/invariants_liquidation_flow.rs`
 - **Invariante:** Im Cold Path (allow_rpc_fallback=true) fuer eine **aktive** PumpFun Bonding Curve (complete=false): Ein Cache-HIT mit cashback_enabled=false darf NICHT blind vertraut werden. Wenn RPC unreachable ist, muss der Outcome ein klarer Failure (Err) sein – NICHT stilles Ok mit falschem 15-Account-Layout.

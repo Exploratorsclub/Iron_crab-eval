@@ -1,4 +1,9 @@
-//! PumpSwap AMM Cold Path State-Integritaet (A.32, A.33, I-24d)
+//! PumpSwap AMM Cold Path State-Integritaet (A.32, A.33, I-24d, I-24e)
+//!
+//! I-24e: Cold-Path Recovery nach strukturellem PumpSwap-Simulationsfehler — `force_refresh`
+//! am PumpFunAmmDex-Vertrag: kein cache-first Wiederverwenden der 14er pool_accounts aus
+//! LivePoolCache; Hot-Path-Instanz (`allow_rpc_on_miss=false`) darf bei force_refresh weder
+//! Cache noch RPC nutzen.
 //!
 //! A.32: Degenerate Cache-Reserves duerfen nicht als gueltiger Truth dominieren.
 //! Null-/Partial-Reserves muessen als Fehler erkannt werden; Cold Path mit
@@ -470,5 +475,144 @@ async fn i24d_external_failure_clear_failure() {
     assert!(
         result.is_err(),
         "I-24d: externer Fehler (RPC unreachable) muss Err liefern, nicht Ok(None)"
+    );
+}
+
+// --- I-24e: force_refresh / pool_address_hint (Cold-Path Recovery, API-Grenze) ---
+
+/// I-24e (Invariante A): Mit `force_refresh=true` duerfen die 14 pool_accounts aus dem
+/// LivePoolCache nicht unveraendert als Truth zurueckkommen (kein stilles Cache-first
+/// Wiederverwenden des SLAVE-14er-Sets). Beobachtbar: Ok(Some) darf nicht exakt der
+/// gecachte Vec sein; Err oder Ok(None) sind zulaessige Outcomes bei unreachable RPC.
+#[tokio::test]
+async fn i24e_force_refresh_skips_stale_livepool_cache_pool_accounts() {
+    let wsol = wsol_mint();
+    let base_mint = Pubkey::new_unique();
+    let pool_market = Pubkey::new_unique();
+    let pool_accounts: Vec<Pubkey> = vec![
+        pool_market,
+        Pubkey::new_unique(),
+        base_mint,
+        wsol,
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+    ];
+    assert_eq!(pool_accounts.len(), 14);
+
+    let cache = Arc::new(LivePoolCache::new());
+    cache.upsert(
+        pool_market,
+        CachedPoolState::PumpAmm(PumpAmmState {
+            base_mint,
+            quote_mint: wsol,
+            pool_base_token_account: Pubkey::new_unique(),
+            pool_quote_token_account: Pubkey::new_unique(),
+            base_reserve: Some(1_000_000_000),
+            quote_reserve: Some(100_000_000),
+            pool_accounts: pool_accounts.clone(),
+            creator: None,
+        }),
+        100,
+    );
+
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, true);
+
+    let result = dex
+        .pool_accounts_v1_for_base_mint_with_hint(base_mint, None, true)
+        .await;
+
+    assert!(
+        !matches!(result.as_ref(), Ok(Some(a)) if a == &pool_accounts),
+        "I-24e: force_refresh must not return stale LivePoolCache 14er unchanged as Ok(Some): {:?}",
+        result
+    );
+}
+
+/// I-24e: `force_refresh` erfordert RPC-Erlaubnis; Hot-Path-Dex (`allow_rpc_on_miss=false`)
+/// darf weder Cache noch RPC nutzen — kein stilles Zurückgeben der gecachten 14 Accounts.
+#[tokio::test]
+async fn i24e_force_refresh_refuses_without_cold_path_rpc_permission() {
+    let wsol = wsol_mint();
+    let base_mint = Pubkey::new_unique();
+    let pool_market = Pubkey::new_unique();
+    let pool_accounts: Vec<Pubkey> = vec![
+        pool_market,
+        Pubkey::new_unique(),
+        base_mint,
+        wsol,
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+        Pubkey::new_unique(),
+    ];
+
+    let cache = Arc::new(LivePoolCache::new());
+    cache.upsert(
+        pool_market,
+        CachedPoolState::PumpAmm(PumpAmmState {
+            base_mint,
+            quote_mint: wsol,
+            pool_base_token_account: Pubkey::new_unique(),
+            pool_quote_token_account: Pubkey::new_unique(),
+            base_reserve: Some(1_000_000_000),
+            quote_reserve: Some(100_000_000),
+            pool_accounts: pool_accounts.clone(),
+            creator: None,
+        }),
+        100,
+    );
+
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, false);
+
+    let result = dex
+        .pool_accounts_v1_for_base_mint_with_hint(base_mint, Some(pool_market), true)
+        .await;
+
+    assert!(result.is_ok());
+    assert!(
+        result.unwrap().is_none(),
+        "I-24e: Hot-Path dex + force_refresh muss weder Cache noch RPC nutzen (Ok(None))"
+    );
+}
+
+/// I-24e (Invariante B, Teil): Ein ungueltiger `pool_address_hint` darf nicht in einen
+/// unbounded getProgramAccounts-Fallback uebergehen — klarer Fehler nach kurzem Timeout.
+#[tokio::test]
+async fn i24e_pool_address_hint_parse_fail_errors_without_global_scan() {
+    let base_mint = Pubkey::new_unique();
+    let bad_hint = Pubkey::new_unique();
+    let cache = Arc::new(LivePoolCache::new());
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, true);
+
+    let fut = dex.pool_accounts_v1_for_base_mint_with_hint(base_mint, Some(bad_hint), false);
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(3), fut)
+        .await
+        .expect("I-24e: must not block on global discovery scan");
+
+    assert!(
+        completed.is_err(),
+        "I-24e: expected Err for failed hint parse; got {completed:?}"
+    );
+    let msg = format!("{:#}", completed.unwrap_err());
+    assert!(
+        msg.contains("I-24d") || msg.contains("pool_address hint"),
+        "unexpected error message: {msg}"
     );
 }
