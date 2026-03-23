@@ -7,10 +7,10 @@
 //! rückverfolgbar zu decision_id und intent_id.
 
 use ironcrab::ipc::{
-    CheckResult, DecisionOutcome, DecisionRecord, ExecutionFees, ExecutionPnl, ExecutionResult,
-    ExecutionStatus, ExplicitAmount, FillStatus, FillUnavailableReason, IntentOrigin, IntentTier,
-    MarketEvent, MarketEventKind, RecordHeader, RejectReason, SimulationResult, TradeIntent,
-    TradeResources, TradeSide, TradingRegime,
+    CheckResult, ControlRequest, ControlRequestKind, DecisionOutcome, DecisionRecord,
+    ExecutionFees, ExecutionPnl, ExecutionResult, ExecutionStatus, ExplicitAmount, FillStatus,
+    FillUnavailableReason, IntentOrigin, IntentTier, MarketEvent, MarketEventKind, RecordHeader,
+    RejectReason, SimulationResult, TradeIntent, TradeResources, TradeSide, TradingRegime,
 };
 use rust_decimal::Decimal;
 
@@ -455,5 +455,47 @@ fn jsonl_line_format() {
     for (i, line) in jsonl.lines().enumerate() {
         let parsed: MarketEvent = serde_json::from_str(line).unwrap();
         assert_eq!(parsed.event_id, format!("e{}", i + 1));
+    }
+}
+
+/// I-24d Cold-Path Recovery: On-Wire-Format fuer `force_refresh` und `pool_address_hint`
+/// auf `ControlRequest` (EnsurePumpAmmPoolAccounts). Blackbox: JSON muss Felder tragen und
+/// roundtrippen — Vertrag fuer market-data/execution-engine ohne Impl-Interna.
+#[test]
+fn control_request_ensure_pump_amm_pool_accounts_force_refresh_and_pool_hint_roundtrip() {
+    let mut req = ControlRequest::new(
+        "ironcrab-eval",
+        "wire-test",
+        "run-1",
+        "req-001".to_string(),
+        "market-data",
+        ControlRequestKind::EnsurePumpAmmPoolAccounts {
+            base_mint: "BaseMint11111111111111111111111111111111".to_string(),
+        },
+    );
+    req.force_refresh = true;
+    req.pool_address_hint = Some("PoolHint1111111111111111111111111111111111".to_string());
+
+    let json = serde_json::to_string(&req).unwrap();
+    assert!(
+        json.contains("\"force_refresh\":true"),
+        "JSON must serialize force_refresh for Cold-Path recovery contract: {json}"
+    );
+    assert!(
+        json.contains("\"pool_address_hint\""),
+        "JSON must serialize pool_address_hint (intent-level pool hint wire contract): {json}"
+    );
+
+    let parsed: ControlRequest = serde_json::from_str(&json).unwrap();
+    assert!(parsed.force_refresh);
+    assert_eq!(
+        parsed.pool_address_hint.as_deref(),
+        Some("PoolHint1111111111111111111111111111111111")
+    );
+    match &parsed.kind {
+        ControlRequestKind::EnsurePumpAmmPoolAccounts { base_mint } => {
+            assert_eq!(base_mint, "BaseMint11111111111111111111111111111111");
+        }
+        other => panic!("expected EnsurePumpAmmPoolAccounts, got {other:?}"),
     }
 }

@@ -81,6 +81,8 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | I-4 / I-7 | Hot Path RPC-Freiheit | ✅ Eval-getestet (`invariants_hot_path_no_rpc.rs`) |
 | I-14 | tokens_per_sol Konvention | Eval-getestet (`invariants_tokens_per_sol.rs`) |
 
+**PumpSwap Recovery (I-24e, A.43):** API- und Wire-Vertraege fuer `force_refresh` und `pool_address_hint` sind Eval-getestet (`invariants_pumpswap_amm_liquidation.rs`, `ipc_schema_serde.rs`). **Offene Luecke:** End-to-End-Nachweis, dass `intent.resources.pools[0]` in der execution-engine vor einem fehlenden base→pool Cache-Eintrag priorisiert wird — dafuer fehlt ein Blackbox-Einstieg (z.B. E2E mit Intent-Payload und korreliertem `EnsurePumpAmmPoolAccounts`); siehe INVARIANTS.md A.43.
+
 ---
 
 ## 4. Implementierungs-Checkliste

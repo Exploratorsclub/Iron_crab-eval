@@ -2,6 +2,8 @@
 //!
 //! On-Wire Blackbox-Test: EnsurePumpAmmPoolAccounts (PumpSwap pool_accounts) → market-data → ControlResponse.
 //! Beweist den Request/Reply-Contract fuer I-24d ohne Liquidation-E2E.
+//! Erweiterte Felder (`force_refresh`, `pool_address_hint` auf `ControlRequest`) werden separat
+//! in `ipc_schema_serde` roundtrip-getestet; dieser E2E-Test nutzt weiterhin nur `base_mint` (minimal).
 //!
 //! STOP-CHECK: Nur Eval-Repo, kein Impl-Code, Blackbox an API-Grenze.
 
