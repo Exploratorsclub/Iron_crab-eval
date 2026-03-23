@@ -1,5 +1,13 @@
 //! PumpSwap AMM Cold Path State-Integritaet (A.32, A.33, I-24d, I-24e)
 //!
+//! **PumpSwap Recovery-Semantik (Blackbox, Eval-Vertrag):** struktureller Cache-/Account-Mismatch
+//! wird hier nicht durch cache-first stale 14er „geheilt“; autoritativer Zustand kommt nur ueber
+//! `PoolCacheUpdate` (market-data) in den SLAVE-Cache; `force_refresh`-Wire fuer Request/Reply
+//! liegt in `tests/ipc_schema_serde.rs` (`control_request_ensure_pump_amm_pool_accounts_*`).
+//! - **Cold Path / kein stale cache-first bei `force_refresh`:** `i24e_force_refresh_skips_stale_livepool_cache_pool_accounts`
+//! - **Hot Path / nicht blockierend (kein Cache/RPC im selben Aufruf):** `i24e_force_refresh_refuses_without_cold_path_rpc_permission`
+//! - **Autoritativer Update-Pfad, folgender Versuch:** `i24d_after_authoritative_update_retry_can_proceed` (und I-24d (b)/(c) darueber)
+//!
 //! I-24e: Cold-Path Recovery nach strukturellem PumpSwap-Simulationsfehler — `force_refresh`
 //! am PumpFunAmmDex-Vertrag: kein cache-first Wiederverwenden der 14er pool_accounts aus
 //! LivePoolCache; Hot-Path-Instanz (`allow_rpc_on_miss=false`) darf bei force_refresh weder
