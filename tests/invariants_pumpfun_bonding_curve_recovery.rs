@@ -3,8 +3,12 @@
 //! Abgedeckte Invarianten (Eval, öffentliche API / On-Wire):
 //! - `ControlRequestKind::EnsurePumpfunBondingCurve` + `force_refresh_pumpfun` serialisieren
 //!   den **Force-Refresh**-Intent (kein reines Cache-first für diesen Request).
-//! - Regulärer PumpFun-Hot-Path (hier: PumpFun AMM Quote bei Cache-Miss) bleibt ohne
-//!   Control-Plane-Recovery; ergänzend zu INVARIANTS.md A.12 / `invariants_hot_path_no_rpc`.
+//! - Manueller Cold-Path **sell_all=true**: über `TradeIntent.metadata` als transportierbarer
+//!   On-Wire-Vertrag (Schlüssel `sell_all` + Zielroute `pools` enthält `pumpfun`), zusammen mit
+//!   dem Recovery-`ControlRequest` oben — ohne Execution-Engine-Internals.
+//! - Regulärer PumpFun-**Bonding-Curve**-Hot-Path: `PumpFunDex::quote_exact_in` bei Cache-Miss
+//!   liefert `Ok(None)` ohne blockierende Control-Plane-Recovery (I-7, vgl. `PumpFunDex`-Docs zu
+//!   `allow_rpc_fallback` auf dem Swap-Build-Pfad; hier: reines Quote-Cache-Miss-Verhalten).
 //!
 //! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; keine Impl unter `Iron_crab/src/`;
 //! Assertions passen zur dokumentierten Semantik der öffentlichen Typen.
@@ -20,12 +24,16 @@ use std::time::Duration;
 
 use common::request_reply_e2e_harness::RequestReplyE2eHarness;
 use futures::StreamExt;
-use ironcrab::ipc::{ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus};
+use ironcrab::ipc::{
+    ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus, ExplicitAmount,
+    IntentOrigin, IntentTier, TradeIntent, TradeResources, TradeSide, TradingRegime,
+};
 use ironcrab::nats::topics::{TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES};
-use ironcrab::solana::dex::pumpfun_amm::PumpFunAmmDex;
+use ironcrab::solana::dex::pumpfun::PumpFunDex;
 use ironcrab::solana::dex::Dex;
 use ironcrab::solana::rpc::SolanaRpc;
 use solana_sdk::pubkey::Pubkey;
+use std::str::FromStr;
 use std::sync::Arc;
 
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
@@ -82,15 +90,70 @@ fn control_request_ensure_pumpfun_bonding_curve_force_refresh_roundtrip() {
     }
 }
 
-/// Hot-Path: PumpFun AMM bleibt bei Cache-Miss ohne RPC/Control-Recovery (kein blockierender Cold-Path).
+/// Manueller Cold-Path sell_all=true: TradeIntent trägt Kennzeichnung + PumpFun-Route im Wire-JSON.
+/// Ergänzt den EnsurePumpfunBondingCurve-Vertrag: Engine-seitige Zuordnung sell_all→Recovery bleibt
+/// Implementierungsdetail; hier nur der **beobachtbare** Intent-On-Wire (metadata + pools).
+#[test]
+fn trade_intent_manual_sell_all_pumpfun_route_roundtrip() {
+    let token_mint = SAMPLE_BASE_MINT.to_string();
+    let resources = TradeResources {
+        input_mint: token_mint.clone(),
+        output_mint: WSOL_MINT.to_string(),
+        pools: vec!["pumpfun".to_string()],
+        accounts: vec![],
+        token_program: None,
+    };
+
+    let mut intent = TradeIntent::new(
+        "ironcrab-eval",
+        "wire-test",
+        "run-sellall",
+        "intent-sell-all-pf".to_string(),
+        "ui-manual",
+        IntentTier::Tier0,
+        IntentOrigin::StrategyA,
+        ExplicitAmount::new(1_000_000, 6),
+        resources,
+        0,
+        500,
+        TradeSide::Sell,
+        TradingRegime::Early,
+    );
+    intent
+        .metadata
+        .insert("sell_all".to_string(), "true".to_string());
+
+    let json = serde_json::to_string(&intent).expect("serialize TradeIntent");
+    assert!(
+        json.contains("\"sell_all\":\"true\""),
+        "metadata muss sell_all=true für manuellen Sell-All-Cold-Path tragen: {json}"
+    );
+    assert!(
+        json.contains("pumpfun"),
+        "resources.pools muss PumpFun-Bonding-Curve-Route markieren (pumpfun): {json}"
+    );
+
+    let parsed: TradeIntent = serde_json::from_str(&json).expect("deserialize TradeIntent");
+    assert_eq!(
+        parsed.metadata.get("sell_all").map(String::as_str),
+        Some("true")
+    );
+    assert!(parsed.resources.pools.iter().any(|p| p == "pumpfun"));
+}
+
+/// Hot-Path (Bonding Curve, nicht PumpSwap AMM): Quote bei fehlendem Cache → kein Pflicht-RPC,
+/// kein EnsurePumpfunBondingCurve (nur `PumpFunDex` + leeres Cache-Backing).
 #[tokio::test]
-async fn pumpfun_hot_path_amm_quote_cache_miss_no_control_plane_recovery() {
-    let cache = Arc::new(ironcrab::execution::live_pool_cache::LivePoolCache::new());
+async fn pumpfun_bonding_curve_hot_path_quote_cache_miss_no_control_plane_recovery() {
     let rpc = Arc::new(SolanaRpc::new(DUMMY_RPC));
-    let dex = PumpFunAmmDex::new_with_cache(rpc, cache, false);
-    let unknown_mint = Pubkey::new_unique();
+    let mut dex = PumpFunDex::new(rpc, None).expect("PumpFunDex::new");
+    let wallet = Pubkey::from_str("Ase7z1mRLps2cTNQnRHpLyQL4Q5FHwonjmZnYCTuUDZM").expect("wallet");
+    dex.set_user_authority(wallet);
+
+    let unknown_token = Pubkey::new_unique();
+    // SELL: Token → WSOL auf der Bonding Curve (Dex::quote_exact_in)
     let result = dex
-        .quote_exact_in(WSOL_MINT, &unknown_mint.to_string(), 1_000_000)
+        .quote_exact_in(&unknown_token.to_string(), WSOL_MINT, 1_000_000)
         .await;
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
