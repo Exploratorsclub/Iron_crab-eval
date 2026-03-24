@@ -3,9 +3,10 @@
 //! Abgedeckte Invarianten (Eval, öffentliche API / On-Wire):
 //! - `ControlRequestKind::EnsurePumpfunBondingCurve` + `force_refresh_pumpfun` serialisieren
 //!   den **Force-Refresh**-Intent (kein reines Cache-first für diesen Request).
-//! - Manueller Cold-Path **sell_all=true**: über `TradeIntent.metadata` als transportierbarer
-//!   On-Wire-Vertrag (Schlüssel `sell_all` + Zielroute `pools` enthält `pumpfun`), zusammen mit
-//!   dem Recovery-`ControlRequest` oben — ohne Execution-Engine-Internals.
+//! - Manueller Cold-Path **sell_all=true**: beobachtbarer Wire-Vertrag aligned mit
+//!   execution-engine Cold-Path-Klassifikation: `metadata.sell_all`, `metadata.dex`,
+//!   `resources.pools` Länge 1 mit Bonding-Curve-Pubkey (aus `PumpFunDex::derive_bonding_curve_static`
+//!   zum `input_mint`), nicht der Literal-String `pumpfun` als Pool.
 //! - Regulärer PumpFun-**Bonding-Curve**-Hot-Path: `PumpFunDex::quote_exact_in` bei Cache-Miss
 //!   liefert `Ok(None)` ohne blockierende Control-Plane-Recovery (I-7, vgl. `PumpFunDex`-Docs zu
 //!   `allow_rpc_fallback` auf dem Swap-Build-Pfad; hier: reines Quote-Cache-Miss-Verhalten).
@@ -90,16 +91,20 @@ fn control_request_ensure_pumpfun_bonding_curve_force_refresh_roundtrip() {
     }
 }
 
-/// Manueller Cold-Path sell_all=true: TradeIntent trägt Kennzeichnung + PumpFun-Route im Wire-JSON.
-/// Ergänzt den EnsurePumpfunBondingCurve-Vertrag: Engine-seitige Zuordnung sell_all→Recovery bleibt
-/// Implementierungsdetail; hier nur der **beobachtbare** Intent-On-Wire (metadata + pools).
+/// Manueller Cold-Path sell_all=true: Wire-Shape entspricht der beobachtbaren Recovery-Vorbedingung
+/// (dex + sell_all + genau ein Pool = Bonding-Curve-PDA zum Mint), abgeleitet per öffentlicher API.
 #[test]
 fn trade_intent_manual_sell_all_pumpfun_route_roundtrip() {
-    let token_mint = SAMPLE_BASE_MINT.to_string();
+    // Gültiger Mint-Pubkey (SAMPLE_BASE_MINT ist absichtlich nur Wire-Placeholder im ControlRequest-Test).
+    let token_mint_pk = Pubkey::new_unique();
+    let token_mint = token_mint_pk.to_string();
+    let (bonding_curve, _bump) = PumpFunDex::derive_bonding_curve_static(&token_mint_pk);
+    let bonding_curve_str = bonding_curve.to_string();
+
     let resources = TradeResources {
         input_mint: token_mint.clone(),
         output_mint: WSOL_MINT.to_string(),
-        pools: vec!["pumpfun".to_string()],
+        pools: vec![bonding_curve_str.clone()],
         accounts: vec![],
         token_program: None,
     };
@@ -122,6 +127,9 @@ fn trade_intent_manual_sell_all_pumpfun_route_roundtrip() {
     intent
         .metadata
         .insert("sell_all".to_string(), "true".to_string());
+    intent
+        .metadata
+        .insert("dex".to_string(), "pumpfun".to_string());
 
     let json = serde_json::to_string(&intent).expect("serialize TradeIntent");
     assert!(
@@ -129,8 +137,12 @@ fn trade_intent_manual_sell_all_pumpfun_route_roundtrip() {
         "metadata muss sell_all=true für manuellen Sell-All-Cold-Path tragen: {json}"
     );
     assert!(
-        json.contains("pumpfun"),
-        "resources.pools muss PumpFun-Bonding-Curve-Route markieren (pumpfun): {json}"
+        json.contains("\"dex\":\"pumpfun\""),
+        "metadata muss dex=pumpfun für PumpFun Cold-Path-Klassifikation tragen: {json}"
+    );
+    assert!(
+        json.contains(&bonding_curve_str),
+        "resources.pools[0] muss Bonding-Curve-PDA (base58) sein, abgeleitet vom input_mint: {json}"
     );
 
     let parsed: TradeIntent = serde_json::from_str(&json).expect("deserialize TradeIntent");
@@ -138,7 +150,16 @@ fn trade_intent_manual_sell_all_pumpfun_route_roundtrip() {
         parsed.metadata.get("sell_all").map(String::as_str),
         Some("true")
     );
-    assert!(parsed.resources.pools.iter().any(|p| p == "pumpfun"));
+    assert_eq!(
+        parsed.metadata.get("dex").map(String::as_str),
+        Some("pumpfun")
+    );
+    assert_eq!(parsed.resources.pools.len(), 1);
+    let pool_pk = Pubkey::from_str(&parsed.resources.pools[0]).expect("pools[0] base58 pubkey");
+    assert_eq!(
+        pool_pk, bonding_curve,
+        "Der einzelne Pool-Eintrag muss dem zum input_mint abgeleiteten Bonding-Curve-PDA entsprechen"
+    );
 }
 
 /// Hot-Path (Bonding Curve, nicht PumpSwap AMM): Quote bei fehlendem Cache → kein Pflicht-RPC,
