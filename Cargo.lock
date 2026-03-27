@@ -2258,7 +2258,7 @@ dependencies = [
 [[package]]
 name = "ironcrab"
 version = "0.4.0"
-source = "git+https://github.com/Exploratorsclub/Iron_crab.git?branch=architecture-rebuild#37db6cba310ec116ff5860f09bfc4e7ec18c3eac"
+source = "git+https://github.com/Exploratorsclub/Iron_crab.git?branch=architecture-rebuild#029bf33f01be72c5e18166aff2fc93ad37d05c49"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -9493,7 +9493,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-client"
 version = "12.2.0"
-source = "git+https://github.com/rpcpool/yellowstone-grpc.git?branch=master#0547c3d1b4a37905a0f48ce0088369a5a4d3d012"
+source = "git+https://github.com/rpcpool/yellowstone-grpc.git?branch=master#b39a415a219e842143f97440a0d0ef04207152c2"
 dependencies = [
  "bytes",
  "futures",
@@ -9509,7 +9509,7 @@ dependencies = [
 [[package]]
 name = "yellowstone-grpc-proto"
 version = "12.1.0"
-source = "git+https://github.com/rpcpool/yellowstone-grpc.git?branch=master#0547c3d1b4a37905a0f48ce0088369a5a4d3d012"
+source = "git+https://github.com/rpcpool/yellowstone-grpc.git?branch=master#b39a415a219e842143f97440a0d0ef04207152c2"
 dependencies = [
  "anyhow",
  "prost",
