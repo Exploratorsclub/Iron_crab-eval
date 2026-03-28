@@ -34,6 +34,10 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
   - **Unknown Pair:** Kein Pool für Input/Output-Mint → `None` oder `Ok(None)`
   - **Zero Input:** amount_in = 0 → `None` oder amount_out = 0
   - **Build IX:** `build_swap_ix_from_pool_accounts` liefert nicht-leere Instructions mit korrektem program_id (PumpFunAmmDex)
+  - **PumpSwap Build IX — Fee-Metas (pool_accounts v1):** Für `pool_accounts` der Länge 14 (Reihenfolge laut `PumpFunAmmDex::build_swap_ix_from_pool_accounts`-Doku) gelten die Metas für `protocol_fee_recipient` / `protocol_fee_recipient_ta` in der erzeugten Swap-Instruction wie folgt — nur Builder-/Connector-Vertrag, keine Aussage über Discovery oder Market-Data-Pipeline:
+    - Sind `[6]` und `[7]` beobachtete (nicht-default) Pubkeys, müssen die entsprechenden Account-Metas in der Swap-IX genau diese Werte widerspiegeln (kein stiller Ersatz durch einen globalen Mainnet-Recipient).
+    - Ist `[6]` beobachtet, `[7]` aber default/leer, muss der Build erfolgreich sein und die Fee-ATA aus dem beobachteten Recipient ableiten (SPL Associated Token für das Quote-Mint, verifizierbar per Standard-PDA).
+    - Sind beide `[6]` und `[7]` default/leer, muss der Build mit einem klaren Fehler scheitern (kein stilles Ok mit erfundenem globalem Recipient).
   - **Orca build_swap_ix:** user signer, user ATAs writable, data nicht leer (DoD §H)
   - **PumpFun build_swap_ix:** 2 IXs (ATA + swap), program_id pump.fun, user bei Index 6 signer+writable (DoD §H)
   - **TxBuilder SELL:** `tx_builder::build_tx_plan` mit PumpFun SELL-Intent (creator + min_out_raw) liefert `TxPlanOutcome::Planned` mit 2 IXs (ATA + pump.fun), program_id pump.fun, User Index 6 signer+writable. Pure Derivation (kein RPC).
