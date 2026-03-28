@@ -5,6 +5,7 @@
 //! - EnsureRaydiumAmmPoolState (Raydium AMM v4) → market-data → ControlResponse
 //! - EnsureOrcaWhirlpoolPoolState (Orca Whirlpool) → market-data → ControlResponse
 //! - EnsureMeteoraDlmmPoolState (Meteora DLMM) → market-data → ControlResponse
+//! - EnsurePumpfunBondingCurve (PumpFun Bonding Curve) → market-data → ControlResponse
 //!
 //! Beweist den Request/Reply-Contract fuer I-24d ohne Liquidation-E2E.
 //! Erweiterte Felder (`force_refresh`, `pool_address_hint` auf `ControlRequest`) werden separat
@@ -317,4 +318,60 @@ fn request_reply_contract_meteora_dlmm_market_data_responds() {
     harness.stop();
 
     result.expect("Request/Reply Contract: market-data muss korreliert antworten (Meteora DLMM)");
+}
+
+/// PumpFun Bonding Curve: EnsurePumpfunBondingCurve → market-data → korrelierte terminale ControlResponse.
+#[test]
+fn request_reply_contract_pumpfun_bonding_curve_market_data_responds() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let mut harness = RequestReplyE2eHarness::new().expect("harness new");
+    if let Err(e) = harness.start_nats() {
+        if e.contains("nats-server nicht gefunden") {
+            eprintln!("SKIP: {}", e);
+            return;
+        }
+        panic!("nats start: {}", e);
+    }
+    harness.start_market_data().expect("market-data start");
+    harness
+        .start_execution_engine()
+        .expect("execution-engine start");
+
+    let nats_url = harness.nats_url().to_string();
+    let request_id = format!(
+        "e2e-contract-pumpfun-bc-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+
+    let kind = ControlRequestKind::EnsurePumpfunBondingCurve {
+        base_mint: UNRESOLVABLE_BASE_MINT.to_string(),
+    };
+    let req = ControlRequest::new(
+        "ironcrab-eval",
+        "e2e-contract-pumpfun-bc",
+        "run-e2e",
+        request_id.clone(),
+        "market-data",
+        kind,
+    );
+    let payload = serde_json::to_vec(&req).expect("serialize EnsurePumpfunBondingCurve");
+
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let result = rt.block_on(wait_for_correlated_market_data_response(
+        &nats_url,
+        &request_id,
+        payload,
+    ));
+
+    harness.stop();
+
+    result.expect(
+        "Request/Reply Contract: market-data muss korreliert antworten (PumpFun Bonding Curve)",
+    );
 }
