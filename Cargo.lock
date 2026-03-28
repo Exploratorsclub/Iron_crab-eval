@@ -2258,7 +2258,7 @@ dependencies = [
 [[package]]
 name = "ironcrab"
 version = "0.4.0"
-source = "git+https://github.com/Exploratorsclub/Iron_crab.git?branch=architecture-rebuild#fc4a96f6a9c5ac675cd85aa621f446194071abd1"
+source = "git+https://github.com/Exploratorsclub/Iron_crab.git?branch=architecture-rebuild#c96936545ff3232e3051a2c306859bd961ad050b"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -2328,7 +2328,9 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "solana-pubkey 2.4.0",
  "solana-sdk",
+ "spl-associated-token-account-client",
  "tempfile",
  "tokio",
  "which",

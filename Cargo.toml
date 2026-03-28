@@ -10,6 +10,8 @@ ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", branch = 
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]
+spl-associated-token-account-client = "2.0.0"
+solana-pubkey = "2.1"
 anyhow = "1"
 async-nats = "0.46"
 async-trait = "0.1"
