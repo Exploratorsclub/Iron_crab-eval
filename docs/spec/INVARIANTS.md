@@ -239,13 +239,14 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Getestet:** `control_request_ensure_pumpfun_bonding_curve_force_refresh_roundtrip`; `trade_intent_manual_sell_all_pumpfun_route_roundtrip`; `pumpfun_bc_authoritative_pool_cache_update_makes_refreshed_state_visible_in_slave`; `pumpfun_bc_hot_path_sell_swap_build_bounded_no_recovery_wait`; Hot-Path Quote-Cache-Miss ohne Control-Plane.
 - **Kontext:** Ergänzt A.38 On-Wire nur um den schmalen Recovery-Slice; vollständiger Request/Reply für `EnsurePumpfunBondingCurve` bleibt in `request_reply_e2e_contract.rs`.
 
-### A.42 Cross-DEX Cold-Path Reserve-Fallback (Raydium, RaydiumCpmm, MeteoraDlmm)
+### A.42 Cross-DEX Cold-Path Reserve-Fallback (Raydium, RaydiumCpmm, MeteoraDlmm, Orca Whirlpool)
 - **Datei:** `tests/invariants_cross_dex_cold_path_reserves.rs`
 - **Invariante:** Bekannter Pool + fehlende Live-Reserves im Cold Path = autoritativer RPC-Fallback oder klarer Failure. Wenn fuer einen bereits bekannten Pool die Reserve-/Vault-Daten im LivePoolCache fehlen, darf der Cold Path den Fall nicht still wie einen harmlosen Cache-Miss behandeln. Er muss entweder den autoritativen Reserve-State per RPC nachladen oder einen klaren Fehler (Err) liefern. Nicht erlaubt: stilles Ok(None) oder verdeckter lokaler Ersatz-Truth.
 - **Raydium-Setup:** `inject_cached_amm_state` mit `coin_reserve`/`pc_reserve` = `None` modelliert fehlende injizierte Vault-Reserves (bekannter Pool ohne brauchbaren Reserve-State).
+- **Orca-Setup:** `Orca::new_with_cache_ext(..., allow_rpc_on_miss=true)` aktiviert den Cold-Path-RPC-Fallback; `inject_cached_orca_state` mit `OrcaWhirlpoolState` bei dem `vault_a_balance`/`vault_b_balance` = `None` sind modelliert fehlende Live-Vault-Reserves fuer einen bereits gecachten Whirlpool.
 - **Formal:** Cold Path (allow_rpc_on_miss=true), bekannter Pool, fehlende Reserves, RPC unreachable → Err (nicht Ok(None)).
-- **Getestet:** raydium_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; raydium_cpmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; meteora_dlmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err.
-- **Scope:** Nur Raydium, RaydiumCpmm, MeteoraDlmm. Orca nicht. Hot Path bleibt GEYSER-ONLY (A.12). Kein Overclaim ueber Request/Reply, PumpFun, Orca oder komplettes IX-Layout.
+- **Getestet:** raydium_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; raydium_cpmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; meteora_dlmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; orca_whirlpool_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err.
+- **Scope:** Raydium, RaydiumCpmm, MeteoraDlmm, Orca Whirlpool (Reserve-Fallback-Slice ueber `quote_exact_in` bzw. Raydium `fetch_and_update_reserves`). Hot Path bleibt GEYSER-ONLY (A.12). Kein Overclaim ueber Request/Reply, PumpFun oder komplettes Orca-IX-Layout.
 - **Kontext:** I-5/I-6 Cold-Path-Leitlinie; A.12 Gegenkontext (Hot Path RPC-frei).
 
 ---
@@ -345,11 +346,6 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Datei:** `tests/invariants_hot_path_no_rpc.rs` (geplant)
 - **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt, muss der Recovery-/Discovery-Pfad den bekannten Pool gezielt behandeln. Globaler Scan ist nur Last-Resort fuer komplett unbekannte Pools.
 - **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
-
-### Orca Cold Path (geplant, NICHT Eval-getestet)
-- **Ziel-Invariante:** Bekannter Orca-Pool + gesetzter LivePoolCache + fehlende/unbrauchbare Live-Reserves + Cold-Path-Aktivierung + RPC unreachable => Err (nicht stilles Ok(None)).
-- **Luecke:** Der gemergte Fix (PR #20) haertet den spezifischen Cold Path mit **gesetztem** LivePoolCache und fehlenden Reserves. Orca hat aktuell kein `allow_rpc_on_miss` im Konstruktor (im Gegensatz zu Raydium/RaydiumCpmm/Meteora). Der Contract ist an der `quote_exact_in`-API-Grenze ohne diesen Parameter nicht beobachtbar. Ein Blackbox-Test erfordert entweder die gemergte API (allow_rpc_on_miss o.ae.) oder einen anderen Test-Einstiegspunkt.
-- **Nicht** als aktive Eval-Invariante gefuehrt; kein ignorierten Schein-Test.
 
 ### A.37-A.40 zurueckgezogen
 - Die zuvor vorgeschlagenen Invarianten A.37-A.40 wurden **nicht** als aktive Eval-Invarianten uebernommen.
