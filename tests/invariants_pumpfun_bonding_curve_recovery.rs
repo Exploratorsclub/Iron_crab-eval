@@ -361,7 +361,7 @@ async fn pumpfun_bc_hot_path_sell_swap_build_bounded_no_recovery_wait() {
 
     assert!(
         completed.is_ok(),
-        "Hot-Path-Build muss ohne Panic terminieren: {completed:?}"
+        "Hot-Path-Build mit gültigem Cache-State muss Ok liefern: {completed:?}"
     );
 }
 
