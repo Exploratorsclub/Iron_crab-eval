@@ -10,24 +10,35 @@
 //! - Regulärer PumpFun-**Bonding-Curve**-Hot-Path: `PumpFunDex::quote_exact_in` bei Cache-Miss
 //!   liefert `Ok(None)` ohne blockierende Control-Plane-Recovery (I-7, vgl. `PumpFunDex`-Docs zu
 //!   `allow_rpc_fallback` auf dem Swap-Build-Pfad; hier: reines Quote-Cache-Miss-Verhalten).
+//! - **Cold-Path-Recovery-Semantik (API-Grenze, vgl. I-24d/I-24e für PumpSwap):** Autoritativer
+//!   Zustand gelangt über `PoolCacheUpdate` (dex=`pumpfun`) in den SLAVE-Cache (sichtbar für den
+//!   Folgeversuch; bounded Retry auf EE-Ebene ist nicht als Zähler in der API abbildbar).
+//!   `force_refresh_pumpfun` auf dem Control-Wire ist nicht cache-first. Hot-Path-
+//!   `build_swap_ix_async_with_slippage` mit `allow_rpc_fallback=false` bleibt **ohne**
+//!   Recovery-Warten blockierend begrenzt (kein Hot-Path-Recovery-Vertrag).
 //!
 //! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; keine Impl unter `Iron_crab/src/`;
 //! Assertions passen zur dokumentierten Semantik der öffentlichen Typen.
 //!
-//! Rest-Risiko: „genau ein bounded Retry“ und JetStream-`PoolCacheUpdate` sind im öffentlichen
-//! `ironcrab::ipc`-Schema nicht als Zähler/Metrik abbildbar — E2E-Verifikation erfordert
-//! Prozess-Observability oder Integrationstests ausserhalb dieses schmalen Wire-Vertrags.
+//! Blackbox-Grenze: Kein Zähler für Ensure-Requests oder Engine-Retries im öffentlichen Schema;
+//! JetStream-Publish und execution-engine-interne Retry-Zähler sind hier nicht separat beobachtbar.
 
 mod common;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use common::request_reply_e2e_harness::RequestReplyE2eHarness;
 use futures::StreamExt;
+use ironcrab::execution::live_pool_cache::{
+    create_shared_cache, CachedPoolState, LivePoolCache, PumpFunState,
+};
+use ironcrab::execution::pool_cache_sync::apply_pool_cache_update;
 use ironcrab::ipc::{
     ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus, ExplicitAmount,
-    IntentOrigin, IntentTier, TradeIntent, TradeResources, TradeSide, TradingRegime,
+    IntentOrigin, IntentTier, PoolCacheUpdate, PoolCacheUpdateType, RecordHeader, TradeIntent,
+    TradeResources, TradeSide, TradingRegime,
 };
 use ironcrab::nats::topics::{TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES};
 use ironcrab::solana::dex::pumpfun::PumpFunDex;
@@ -178,6 +189,180 @@ async fn pumpfun_bonding_curve_hot_path_quote_cache_miss_no_control_plane_recove
         .await;
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
+}
+
+// --- PumpFun Bonding-Curve Cold-Path-Recovery (API-Grenze, I-24d-Analog) ---
+//
+// Modelliert: market-data publiziert autoritativen Zustand als `PoolCacheUpdate`; der Connector
+// konsumiert denselben Pfad wie JetStream → SLAVE (`apply_pool_cache_update`). Kein Claim auf
+// vollständige EE-Orchestrierung oder Retry-Zähler.
+
+fn pumpfun_pool_cache_update_for_recovery(
+    bonding_curve: &Pubkey,
+    token_mint: &Pubkey,
+    creator: &Pubkey,
+    cashback_enabled: bool,
+) -> PoolCacheUpdate {
+    let mut metadata = HashMap::new();
+    metadata.insert("creator".to_string(), creator.to_string());
+    metadata.insert(
+        "cashback_enabled".to_string(),
+        if cashback_enabled { "true" } else { "false" }.to_string(),
+    );
+    PoolCacheUpdate {
+        header: RecordHeader::new("market-data", "v0.1", "run-eval-pf-bc-recovery"),
+        dex: "pumpfun".to_string(),
+        base_mint: token_mint.to_string(),
+        quote_mint: WSOL_MINT.to_string(),
+        base_reserve: 793_100_000_000_000,
+        quote_reserve: 30_000_000_000,
+        pool_address: bonding_curve.to_string(),
+        metadata: Some(metadata),
+        geyser_slot: 100,
+        liquidity_lamports: Some(30_000_000_000),
+        update_type: PoolCacheUpdateType::PoolDiscovered,
+    }
+}
+
+/// I-24d-Analog (PumpFun BC): Autoritativer `PoolCacheUpdate` (dex=pumpfun, JetStream-Pfad) macht
+/// den **neuen** Bonding-Curve-State im SLAVE-Cache sichtbar — der Folgeversuch in der
+/// execution-engine konsumiert denselben Eintrag (ein bounded Retry auf EE-Ebene; hier nur
+/// Cache-Postcondition wie bei PumpSwap `i24d_after_authoritative_update_retry_can_proceed`).
+///
+/// Blackbox-Grenze: `PumpFunDex::build_swap_ix_async_with_slippage` kann im Cold Path zusaetzlich
+/// eine RPC-Verifikation von `cashback_enabled` ausloesen; ohne laufenden RPC bleibt der Build auch
+/// nach Refresh ggf. Err — das ist kein Widerspruch zum Refresh-Vertrag, solange der SLAVE-State
+/// dem Publish entspricht.
+#[tokio::test]
+async fn pumpfun_bc_authoritative_pool_cache_update_makes_refreshed_state_visible_in_slave() {
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let token_mint = Pubkey::new_unique();
+    let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
+    let associated_bonding_curve = Pubkey::new_unique();
+    let stale_creator = Pubkey::new_unique();
+    let creator = Pubkey::new_unique();
+
+    // Stale SLAVE-Cache (vgl. A.41): cashback_enabled=false — Cold Path + RPC unreachable → Err.
+    let cache = create_shared_cache();
+    cache.upsert(
+        bonding_curve,
+        CachedPoolState::PumpFun(PumpFunState {
+            token_mint,
+            bonding_curve,
+            associated_bonding_curve,
+            virtual_sol_reserves: 100_000_000,
+            virtual_token_reserves: 1_000_000_000,
+            real_sol_reserves: 100_000_000,
+            real_token_reserves: 1_000_000_000,
+            complete: false,
+            creator: stale_creator,
+            cashback_enabled: false,
+        }),
+        100,
+    );
+
+    let mut dex = PumpFunDex::new(rpc, Some(cache.clone())).expect("PumpFunDex::new");
+    let wallet = Pubkey::from_str("Ase7z1mRLps2cTNQnRHpLyQL4Q5FHwonjmZnYCTuUDZM").expect("wallet");
+    dex.set_user_authority(wallet);
+
+    let first = dex
+        .build_swap_ix_async_with_slippage(
+            &token_mint.to_string(),
+            WSOL_MINT,
+            1_000_000,
+            100,
+            None,
+            500,
+            None,
+            false,
+            true,
+        )
+        .await;
+    assert!(
+        first.is_err(),
+        "Vor autoritativem Refresh: Cold Path + stale cashback + RPC unreachable muss Err sein (kein blindes Ok)"
+    );
+
+    // Autoritativer Refresh (force-semantic auf Control-Plane; hier: eingehendes PoolCacheUpdate)
+    let update =
+        pumpfun_pool_cache_update_for_recovery(&bonding_curve, &token_mint, &creator, true);
+    assert!(
+        apply_pool_cache_update(&cache, &update),
+        "PoolCacheUpdate muss SLAVE-Cache aktualisieren"
+    );
+
+    let state = cache
+        .get(&bonding_curve)
+        .expect("Bonding-Curve-Pool muss nach Update im SLAVE-Cache sein");
+    match state {
+        CachedPoolState::PumpFun(s) => {
+            assert!(
+                s.cashback_enabled,
+                "Nach autoritativem PoolCacheUpdate muss SLAVE cashback_enabled dem Metadata entsprechen (Refresh sichtbar)"
+            );
+            assert_eq!(
+                s.creator, creator,
+                "creator im PumpFunState muss aus dem Refresh stammen"
+            );
+        }
+        _ => panic!("erwartet PumpFun CachedPoolState"),
+    }
+}
+
+/// Hot-Path-SELL (`allow_rpc_fallback=false`): Swap-Build bleibt blockierend begrenzt — kein
+/// Recovery-Warten im Sinne eines Cold-Path-Retry (I-7; vgl. PumpFunDex-Dokumentation zu
+/// `allow_rpc_fallback`).
+#[tokio::test]
+async fn pumpfun_bc_hot_path_sell_swap_build_bounded_no_recovery_wait() {
+    let rpc = Arc::new(SolanaRpc::new("http://127.0.0.1:0"));
+    let token_mint = Pubkey::new_unique();
+    let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
+    let associated_bonding_curve = Pubkey::new_unique();
+    let creator = Pubkey::new_unique();
+
+    let cache = Arc::new(LivePoolCache::new());
+    cache.upsert(
+        bonding_curve,
+        CachedPoolState::PumpFun(PumpFunState {
+            token_mint,
+            bonding_curve,
+            associated_bonding_curve,
+            virtual_sol_reserves: 100_000_000,
+            virtual_token_reserves: 1_000_000_000,
+            real_sol_reserves: 100_000_000,
+            real_token_reserves: 1_000_000_000,
+            complete: false,
+            creator,
+            cashback_enabled: true,
+        }),
+        100,
+    );
+
+    let mut dex = PumpFunDex::new(rpc, Some(cache)).expect("PumpFunDex::new");
+    let wallet = Pubkey::from_str("Ase7z1mRLps2cTNQnRHpLyQL4Q5FHwonjmZnYCTuUDZM").expect("wallet");
+    dex.set_user_authority(wallet);
+
+    let token_mint_str = token_mint.to_string();
+    let fut = dex.build_swap_ix_async_with_slippage(
+        &token_mint_str,
+        WSOL_MINT,
+        1_000_000,
+        100,
+        None,
+        500,
+        None,
+        false,
+        false,
+    );
+
+    let completed = tokio::time::timeout(Duration::from_secs(3), fut)
+        .await
+        .expect("Hot-Path PumpFun-SELL darf nicht auf Recovery/JetStream warten (muss innerhalb weniger Sekunden terminieren)");
+
+    assert!(
+        completed.is_ok(),
+        "Hot-Path-Build mit gültigem Cache-State muss Ok liefern: {completed:?}"
+    );
 }
 
 /// Optional: market-data antwortet auf `EnsurePumpfunBondingCurve` (wie andere ControlRequests).
