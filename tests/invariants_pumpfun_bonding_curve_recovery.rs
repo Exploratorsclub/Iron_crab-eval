@@ -239,6 +239,7 @@ async fn pumpfun_bc_authoritative_pool_cache_update_makes_refreshed_state_visibl
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
     let associated_bonding_curve = Pubkey::new_unique();
+    let stale_creator = Pubkey::new_unique();
     let creator = Pubkey::new_unique();
 
     // Stale SLAVE-Cache (vgl. A.41): cashback_enabled=false — Cold Path + RPC unreachable → Err.
@@ -254,7 +255,7 @@ async fn pumpfun_bc_authoritative_pool_cache_update_makes_refreshed_state_visibl
             real_sol_reserves: 100_000_000,
             real_token_reserves: 1_000_000_000,
             complete: false,
-            creator,
+            creator: stale_creator,
             cashback_enabled: false,
         }),
         100,
