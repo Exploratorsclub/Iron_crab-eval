@@ -1,4 +1,4 @@
-//! Request/Reply E2E Contract Test (I-24c, I-24d)
+//! Request/Reply E2E Contract Test (I-24c, I-24d, A.43 schmaler Slice)
 //!
 //! On-Wire Blackbox-Tests:
 //! - EnsurePumpAmmPoolAccounts (PumpSwap pool_accounts) → market-data → ControlResponse
@@ -9,25 +9,39 @@
 //!
 //! Beweist den Request/Reply-Contract fuer I-24d ohne Liquidation-E2E.
 //! Erweiterte Felder (`force_refresh`, `pool_address_hint` auf `ControlRequest`) werden separat
-//! in `ipc_schema_serde` roundtrip-getestet; dieser E2E-Test nutzt weiterhin nur `base_mint` (minimal).
+//! in `ipc_schema_serde` roundtrip-getestet; der Basis-E2E-Test nutzt weiterhin nur `base_mint` (minimal).
+//!
+//! **A.43 (schmal):** Manueller PumpSwap-Cold-Path (`source=ui-manual`, `metadata.sell_all` / `dex=pump_amm`,
+//! genau ein `resources.pools[0]`): beobachtbarer Wire-Slice → `EnsurePumpAmmPoolAccounts` mit
+//! `pool_address_hint == pools[0]` und korrelierte terminale `ControlResponse` von `market-data`.
+//! Kein Claim ueber andere SELL-Pfade oder Engine-interne Orchestrierung.
 //!
 //! STOP-CHECK: Nur Eval-Repo, kein Impl-Code, Blackbox an API-Grenze.
 
 mod common;
 
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use common::request_reply_e2e_harness::RequestReplyE2eHarness;
 use futures::StreamExt;
-use ironcrab::ipc::{ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus};
-use ironcrab::nats::topics::{TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES};
+use ironcrab::ipc::{
+    ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus, ExplicitAmount,
+    IntentOrigin, IntentTier, TradeIntent, TradeResources, TradeSide, TradingRegime,
+};
+use ironcrab::nats::topics::{
+    TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES, TOPIC_TRADE_INTENTS,
+};
+use solana_sdk::pubkey::Pubkey;
 
 /// Timeout für Response-Empfang (Sekunden).
 const RESPONSE_TIMEOUT_SECS: u64 = 15;
 
 /// Absichtlich nicht auflösbare base_mint (Cold-Path Ensure* liefert typischerweise not_found).
 const UNRESOLVABLE_BASE_MINT: &str = "11111111111111111111111111111111";
+
+const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
 /// Bounded Poll auf `TOPIC_CONTROL_RESPONSES`: wartet auf `ControlResponse` mit passender
 /// `request_id`, `target == "market-data"`, und terminalem Status (ok | not_found | error).
@@ -87,6 +101,116 @@ async fn wait_for_correlated_market_data_response(
             ControlResponseStatus::Ok
             | ControlResponseStatus::NotFound
             | ControlResponseStatus::Error => return Ok(()),
+        }
+    }
+}
+
+/// A.43: Nach manuellem PumpSwap-sell_all-Intent muss ein korreliertes
+/// `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == resources.pools[0]` erscheinen und
+/// `market-data` mit terminalem Status antworten. Verarbeitet Request/Response-Reihenfolge über
+/// zwei Topics (Responses koennen vor dem lokalen Request-Parse eintreffen).
+async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
+    nats_url: &str,
+    base_mint: &str,
+    pool_address: &str,
+    intent_payload: Vec<u8>,
+) -> Result<(), String> {
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("connect: {}", e))?;
+
+    let mut sub_req = client
+        .subscribe(TOPIC_CONTROL_REQUESTS.to_string())
+        .await
+        .map_err(|e| format!("subscribe control_requests: {}", e))?;
+    let mut sub_resp = client
+        .subscribe(TOPIC_CONTROL_RESPONSES.to_string())
+        .await
+        .map_err(|e| format!("subscribe control_responses: {}", e))?;
+
+    client
+        .publish(TOPIC_TRADE_INTENTS.to_string(), intent_payload.into())
+        .await
+        .map_err(|e| format!("publish trade_intents: {}", e))?;
+
+    let mut matched_request_ids: HashSet<String> = HashSet::new();
+    // Response vor zugehoerigem Ensure-Request (Race auf zwei Topics).
+    let mut pending_terminal: HashSet<String> = HashSet::new();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(RESPONSE_TIMEOUT_SECS);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "timeout A.43: kein EnsurePumpAmmPoolAccounts+hint oder keine korrelierte market-data-Response nach {}s (base_mint={base_mint}, pool={pool_address})",
+                RESPONSE_TIMEOUT_SECS
+            ));
+        }
+
+        enum Branch {
+            Req(async_nats::Message),
+            Resp(async_nats::Message),
+        }
+
+        let branch = tokio::select! {
+            m = sub_req.next() => {
+                match m {
+                    Some(msg) => Branch::Req(msg),
+                    None => return Err("control_requests stream ended".to_string()),
+                }
+            }
+            m = sub_resp.next() => {
+                match m {
+                    Some(msg) => Branch::Resp(msg),
+                    None => return Err("control_responses stream ended".to_string()),
+                }
+            }
+        };
+
+        match branch {
+            Branch::Req(msg) => {
+                let req: ControlRequest = match serde_json::from_slice(msg.payload.as_ref()) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                if req.target != "market-data" {
+                    continue;
+                }
+                let hint_ok = req.pool_address_hint.as_deref() == Some(pool_address);
+                let kind_ok = matches!(
+                    &req.kind,
+                    ControlRequestKind::EnsurePumpAmmPoolAccounts { base_mint: bm } if bm == base_mint
+                );
+                if !(hint_ok && kind_ok) {
+                    continue;
+                }
+                if pending_terminal.remove(&req.request_id) {
+                    return Ok(());
+                }
+                matched_request_ids.insert(req.request_id);
+            }
+            Branch::Resp(msg) => {
+                let resp: ControlResponse = match serde_json::from_slice(msg.payload.as_ref()) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                if resp.target != "market-data" {
+                    continue;
+                }
+                let terminal = matches!(
+                    resp.status,
+                    ControlResponseStatus::Ok
+                        | ControlResponseStatus::NotFound
+                        | ControlResponseStatus::Error
+                );
+                if !terminal {
+                    continue;
+                }
+                if matched_request_ids.contains(&resp.request_id) {
+                    return Ok(());
+                }
+                pending_terminal.insert(resp.request_id);
+            }
         }
     }
 }
@@ -156,6 +280,84 @@ fn request_reply_contract_market_data_responds() {
     harness.stop();
 
     result.expect("Request/Reply Contract: market-data muss korreliert antworten (PumpSwap)");
+}
+
+/// A.43: Manueller PumpSwap-Cold-Path (ui-manual, sell_all, dex=pump_amm) → ControlRequest mit
+/// `pool_address_hint == resources.pools[0]` → terminale market-data-ControlResponse.
+#[test]
+fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let mut harness = RequestReplyE2eHarness::new().expect("harness new");
+    if let Err(e) = harness.start_nats() {
+        if e.contains("nats-server nicht gefunden") {
+            eprintln!("SKIP: {}", e);
+            return;
+        }
+        panic!("nats start: {}", e);
+    }
+    harness.start_market_data().expect("market-data start");
+    harness
+        .start_execution_engine()
+        .expect("execution-engine start");
+
+    let token_mint_pk = Pubkey::new_unique();
+    let base_mint = token_mint_pk.to_string();
+    let pool_address_pk = Pubkey::new_unique();
+    let pool_address = pool_address_pk.to_string();
+
+    let resources = TradeResources {
+        input_mint: base_mint.clone(),
+        output_mint: WSOL_MINT.to_string(),
+        pools: vec![pool_address.clone()],
+        accounts: vec![],
+        token_program: None,
+    };
+
+    let mut intent = TradeIntent::new(
+        "ironcrab-eval",
+        "e2e-a43",
+        "run-e2e",
+        format!(
+            "intent-a43-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ),
+        "ui-manual",
+        IntentTier::Tier0,
+        IntentOrigin::StrategyA,
+        ExplicitAmount::new(1_000_000, 6),
+        resources,
+        0,
+        500,
+        TradeSide::Sell,
+        TradingRegime::Early,
+    );
+    let mut md = HashMap::new();
+    md.insert("sell_all".to_string(), "true".to_string());
+    md.insert("dex".to_string(), "pump_amm".to_string());
+    intent.metadata = md;
+
+    let intent_payload = serde_json::to_vec(&intent).expect("serialize TradeIntent (A.43)");
+
+    let nats_url = harness.nats_url().to_string();
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let result = rt.block_on(wait_for_manual_pumpswap_cold_path_control_roundtrip(
+        &nats_url,
+        &base_mint,
+        &pool_address,
+        intent_payload,
+    ));
+
+    harness.stop();
+
+    result.expect(
+        "A.43: EnsurePumpAmmPoolAccounts mit pool_address_hint aus pools[0] und market-data-Response",
+    );
 }
 
 /// Raydium AMM v4: EnsureRaydiumAmmPoolState → market-data → korrelierte terminale ControlResponse.
