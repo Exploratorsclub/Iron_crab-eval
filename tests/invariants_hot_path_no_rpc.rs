@@ -61,6 +61,7 @@ async fn raydium_vault_cache_miss_no_rpc() {
     let quote_vault = Pubkey::new_unique();
     let market_id = Pubkey::new_unique();
 
+    // Pool-Meta ohne injizierte Reserves (None) und ohne Serum-Hilfskonten: Vault-Cache-Miss bleibt GEYSER-ONLY.
     raydium.inject_cached_amm_state(
         pool_addr,
         base_mint,
@@ -69,6 +70,8 @@ async fn raydium_vault_cache_miss_no_rpc() {
         quote_vault,
         9,
         6,
+        None,
+        None,
         market_id,
         None,
         None,
