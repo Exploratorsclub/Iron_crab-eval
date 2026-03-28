@@ -1,4 +1,4 @@
-//! Cross-DEX Cold-Path Reserve-Fallback (Raydium, RaydiumCpmm, MeteoraDlmm)
+//! Cross-DEX Cold-Path Reserve-Fallback (Raydium, RaydiumCpmm, MeteoraDlmm, Orca Whirlpool)
 //!
 //! Invariante: Bekannter Pool + fehlende Live-Reserves im Cold Path =
 //! autoritativer RPC-Fallback oder klarer Failure.
@@ -9,18 +9,23 @@
 //! autoritativen Reserve-State per RPC nachladen oder einen klaren Fehler liefern.
 //! Nicht erlaubt: stilles Ok(None) oder verdeckter lokaler Ersatz-Truth.
 //!
-//! Scope: Nur Raydium, RaydiumCpmm, MeteoraDlmm. Orca gehoert nicht dazu.
 //! Hot Path bleibt GEYSER-ONLY (A.12); dieser Test prueft die Cold-Path-Gegenseite.
 
+use ironcrab::execution::live_pool_cache::{
+    LivePoolCache, OrcaWhirlpoolState, SharedLivePoolCache,
+};
 use ironcrab::solana::dex::meteora_dlmm::MeteoraDlmm;
+use ironcrab::solana::dex::orca::Orca;
 use ironcrab::solana::dex::raydium::Raydium;
 use ironcrab::solana::dex::raydium_cpmm::RaydiumCpmm;
 use ironcrab::solana::dex::Dex;
 use ironcrab::solana::rpc::SolanaRpc;
 use solana_sdk::pubkey::Pubkey;
+use std::str::FromStr;
 use std::sync::Arc;
 
 const DUMMY_RPC: &str = "http://127.0.0.1:0";
+const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
 /// Raydium AMM: Bekannter Pool, fehlende Vault-Reserves, Cold Path (allow_rpc=true),
 /// RPC unreachable → klarer Fehler (Err), NICHT stilles Ok(None).
@@ -129,5 +134,50 @@ async fn meteora_dlmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yiel
     assert!(
         result.is_err(),
         "Cold Path: bekannter Pool + fehlende Reserves + RPC unreachable muss Err liefern, nicht Ok(None)"
+    );
+}
+
+/// Orca Whirlpool: Bekannter Pool (LivePoolCache-Eintrag), fehlende Vault-Reserve-Balances,
+/// Cold Path (`new_with_cache_ext` mit allow_rpc_on_miss=true), RPC unreachable → Err,
+/// NICHT stilles Ok(None).
+#[tokio::test]
+async fn orca_whirlpool_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err() {
+    let rpc = Arc::new(SolanaRpc::new(DUMMY_RPC));
+    let live_pool_cache: SharedLivePoolCache = Arc::new(LivePoolCache::new());
+    let orca = Orca::new_with_cache_ext(rpc, None, Some(live_pool_cache), true);
+
+    let pool_addr = Pubkey::new_unique();
+    let base_mint = Pubkey::new_unique();
+    let quote_mint = Pubkey::from_str(WSOL_MINT).expect("wsol mint");
+    let vault_a = Pubkey::new_unique();
+    let vault_b = Pubkey::new_unique();
+
+    // Bekannter Pool im SLAVE-Cache, aber keine brauchbaren Vault-Balances (None = fehlend).
+    let cached = OrcaWhirlpoolState {
+        token_mint_a: base_mint,
+        token_mint_b: quote_mint,
+        token_vault_a: vault_a,
+        token_vault_b: vault_b,
+        tick_current_index: 0,
+        sqrt_price: 1u128 << 64,
+        liquidity: 1_000_000u128,
+        fee_rate: 30,
+        protocol_fee_rate: 0,
+        tick_spacing: 64,
+        vault_a_balance: None,
+        vault_b_balance: None,
+        token_a_program: None,
+        token_b_program: None,
+    };
+    orca.inject_cached_orca_state(&pool_addr, &cached)
+        .expect("inject_cached_orca_state");
+
+    let result = orca
+        .quote_exact_in(&base_mint.to_string(), &quote_mint.to_string(), 1_000_000)
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Cold Path: bekannter Orca-Pool + fehlende Vault-Reserves + RPC unreachable muss Err liefern, nicht stilles Ok(None)"
     );
 }
