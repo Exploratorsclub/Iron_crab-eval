@@ -81,8 +81,6 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | I-4 / I-7 | Hot Path RPC-Freiheit | ✅ Eval-getestet (`invariants_hot_path_no_rpc.rs`) |
 | I-14 | tokens_per_sol Konvention | Eval-getestet (`invariants_tokens_per_sol.rs`) |
 
-**PumpSwap Recovery (I-24e, A.43):** API- und Wire-Vertraege fuer `force_refresh` und `pool_address_hint` sind Eval-getestet (`invariants_pumpswap_amm_liquidation.rs`, `ipc_schema_serde.rs`). **Offene Luecke:** End-to-End-Nachweis, dass `intent.resources.pools[0]` in der execution-engine vor einem fehlenden base→pool Cache-Eintrag priorisiert wird — dafuer fehlt ein Blackbox-Einstieg (z.B. E2E mit Intent-Payload und korreliertem `EnsurePumpAmmPoolAccounts`); siehe INVARIANTS.md A.43.
-
 ---
 
 ## 4. Implementierungs-Checkliste
@@ -102,6 +100,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 11 | DEX Parser CPI Fallback (A.21) | P1 | `invariants_dex_parser_cpi.rs` | erledigt |
 | 12 | PumpFun Cashback-Upgrade (A.22-A.24) | P0 | `invariants_pumpfun_cashback.rs` | erledigt |
 | 13 | PumpFun Market Order (A.25-A.26) | P0 | `invariants_pumpfun_market_order.rs` | erledigt |
+| 14 | PumpSwap Recovery-Semantik: Cold-Path force refresh, Hot-Path nicht blockieren | P0 | neue/erweiterte PumpSwap/Liquidation Invarianten | erledigt (Impl Scope 1-3 gemergt, Eval-Vertrag in PR #13 gemergt) |
 
 ---
 
@@ -113,6 +112,42 @@ Für jeden neuen Eval-Test:
 2. **Test in ironcrab-eval implementieren** (nur über öffentliche API, keine Interna)
 3. **Im Impl-Repo:** Original behalten (als Regression) oder entfernen, wenn Eval-Test Deckung übernimmt
 4. **CI prüfen:** `cargo fmt`, `cargo check`, `cargo clippy`, `cargo test`
+
+---
+
+## 7. Neue offene Architektur-/Recovery-Invariante
+
+**Thema:** DEX-uebergreifende Recovery-Semantik nach strukturellem Cache-/Account-Mismatch
+
+**Gewuenschte Invariante:**
+- Hot Path (regulaere Buys/Sells) bleibt RPC-frei und blockiert nicht auf Recovery-Warten.
+- Cold Path (Liquidation / manuelle Recovery) darf bei nachgewiesen stale/invalid cache einen Request an `market-data` senden.
+- Dieser Recovery-Request muss semantisch ein **force refresh** sein, nicht cache-first.
+- `market-data` publiziert den autoritativen Refresh als PoolCacheUpdate; erst der folgende Versuch nutzt den neuen State.
+- Diese Semantik soll nach und nach fuer alle relevanten DEX-Pfade umgesetzt werden, damit sellbare Token nicht wegen stale State in der Wallet liegen bleiben.
+
+**Warum offen:**
+- Die aktuelle Architektur trennt Hot Path vs. Cold Path korrekt auf dem Papier, aber die Recovery-Semantik ist bisher nur teilweise und DEX-spezifisch umgesetzt.
+- Das Ziel ist eine schrittweise DEX-Ausweitung in kleinen Scopes, nicht ein grosser Refactor.
+
+**Impl-/Eval-Status (2026-03-24):**
+- Cold-Path-Recovery mit `force_refresh=true` und bounded Wait/Retry ist im Impl-Repo gemergt.
+- Hot-Path fuer regulaere `momentum-bot` PumpSwap-SELLs triggert nach strukturellem Sim-Fail einen nicht-blockierenden async Refresh an `market-data`, ohne Retry im selben Intent.
+- Wiederholte Hot-Path-Refreshes werden lokal per Mint gededupliziert; der Cooldown startet erst nach erfolgreichem `nats.publish -> Ok(true)`.
+- Der Healing-Pfad ist zusaetzlich ueber Runtime-Metriken beobachtbar (Trigger, suppressed, publish ok/fail, no-NATS).
+- Der Eval-Vertrag ist gemergt; Bugbot-Findings zu duplizierten Tests und unnoetiger Ein-Datei-Helper-Abstraktion wurden vor Merge bereinigt.
+- PumpSwap ist damit der erste vollstaendige Slice.
+- PumpFun Bonding Curve Cold-Path-Recovery ist im Impl-Repo jetzt ebenfalls gemergt.
+- Naechster direkter Schritt ist dafuer ein enger Eval-Vertrag fuer force-refresh / autoritativen `market-data`-Refresh / bounded one-retry im Cold Path.
+
+**Empfohlene Test-Richtung:**
+- Pro DEX-Slice einen engen Blackbox-Vertrag formulieren statt einen grossen All-at-once-Test.
+- Fuer PumpSwap ist dieser Slice bereits erledigt.
+- Als naechstes fuer PumpFun Bonding Curve:
+  - stale-state / struktureller Sim-Fail im Cold Path
+  - autoritativer Refresh ueber `market-data`
+  - kein cache-first-Wiederverwenden desselben fehlerhaften States
+  - genau ein bounded Retry nach dem Refresh
 
 ---
 
