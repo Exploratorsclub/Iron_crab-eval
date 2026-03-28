@@ -6,8 +6,9 @@
 //! - EnsureOrcaWhirlpoolPoolState (Orca Whirlpool) → market-data → ControlResponse
 //! - EnsureMeteoraDlmmPoolState (Meteora DLMM) → market-data → ControlResponse
 //! - EnsurePumpfunBondingCurve (PumpFun Bonding Curve) → market-data → ControlResponse
-//! - I-24e / A.43: TradeIntent (PumpSwap-Hint) → execution-engine → EnsurePumpAmmPoolAccounts
-//!   mit `pool_address_hint` (resources.pools[0]) → korrelierte ControlResponse
+//! - I-24e / A.43: manueller Sell-All-Cold-Path (`source=ui-manual`, `metadata.sell_all=true`,
+//!   `metadata.dex=pump_amm`) → execution-engine → EnsurePumpAmmPoolAccounts mit
+//!   `pool_address_hint` (resources.pools[0]) → korrelierte ControlResponse
 //!
 //! Beweist den Request/Reply-Contract fuer I-24d ohne Liquidation-E2E.
 //! Erweiterte Felder (`force_refresh`, `pool_address_hint` auf `ControlRequest`) werden zusaetzlich
@@ -271,8 +272,10 @@ fn request_reply_contract_market_data_responds() {
     result.expect("Request/Reply Contract: market-data muss korreliert antworten (PumpSwap)");
 }
 
-/// A.43 / I-24e: PumpSwap Cold-Path — expliziter Pool-Hint (`resources.pools[0]`) erscheint auf dem
-/// Wire als `pool_address_hint` auf `EnsurePumpAmmPoolAccounts`; danach terminale `ControlResponse`.
+/// A.43 / I-24e: PumpSwap manueller Sell-All-Cold-Path — gleiches Wire-Muster wie
+/// `trade_intent_manual_sell_all_pumpfun_route_roundtrip` (Eval), aber DEX `pump_amm` und 14er Accounts.
+/// Expliziter Pool-Hint (`resources.pools[0]`) erscheint als `pool_address_hint` auf
+/// `EnsurePumpAmmPoolAccounts`; danach terminale `ControlResponse`.
 /// Normativ: Iron_crab/docs/MOMENTUM_V2_SPEC.md §10.2 (Pump AMM): genau ein Pool, `accounts[0] == pools[0]`, 14 Accounts.
 #[test]
 fn request_reply_e2e_pumpswap_intent_pool_hint_on_control_request() {
@@ -317,6 +320,9 @@ fn request_reply_e2e_pumpswap_intent_pool_hint_on_control_request() {
         TradeSide::Sell,
         TradingRegime::Early,
     );
+    intent
+        .metadata
+        .insert("sell_all".to_string(), "true".to_string());
     intent
         .metadata
         .insert("dex".to_string(), "pump_amm".to_string());
