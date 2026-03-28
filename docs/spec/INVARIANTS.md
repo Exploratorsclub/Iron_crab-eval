@@ -94,6 +94,7 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Datei:** `tests/invariants_hot_path_no_rpc.rs`
 - **Invariante:** DEX-Connectors liefern bei Cache-Miss None/Err ohne RPC (Hot Path).
 - **Getestet:** PumpFunAmmDex (quote, pool_accounts), Raydium, RaydiumCpmm, MeteoraDlmm (allow_rpc_on_miss=false). Orca (live_pool_cache gesetzt → bei Vault-Miss statische Reserves, kein RPC).
+- **Raydium-Setup:** `Raydium::inject_cached_amm_state` erhaelt `coin_reserve`/`pc_reserve` als `None`, wenn der Test fehlende Vault-/Reserve-Daten (GEYSER-ONLY-Pfad) prueft; befuellte Reserves spiegeln den gecachten Vault-State fuer Quotes.
 - **Kontext:** Hot Path (Arb, Momentum) darf keine blockierenden RPC-Calls ausführen.
 
 ### A.13 Liquidation 6005-Retry Komponenten (ARCHITECTURE_AUDIT BUG A)
@@ -231,6 +232,7 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 ### A.42 Cross-DEX Cold-Path Reserve-Fallback (Raydium, RaydiumCpmm, MeteoraDlmm)
 - **Datei:** `tests/invariants_cross_dex_cold_path_reserves.rs`
 - **Invariante:** Bekannter Pool + fehlende Live-Reserves im Cold Path = autoritativer RPC-Fallback oder klarer Failure. Wenn fuer einen bereits bekannten Pool die Reserve-/Vault-Daten im LivePoolCache fehlen, darf der Cold Path den Fall nicht still wie einen harmlosen Cache-Miss behandeln. Er muss entweder den autoritativen Reserve-State per RPC nachladen oder einen klaren Fehler (Err) liefern. Nicht erlaubt: stilles Ok(None) oder verdeckter lokaler Ersatz-Truth.
+- **Raydium-Setup:** `inject_cached_amm_state` mit `coin_reserve`/`pc_reserve` = `None` modelliert fehlende injizierte Vault-Reserves (bekannter Pool ohne brauchbaren Reserve-State).
 - **Formal:** Cold Path (allow_rpc_on_miss=true), bekannter Pool, fehlende Reserves, RPC unreachable → Err (nicht Ok(None)).
 - **Getestet:** raydium_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; raydium_cpmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err; meteora_dlmm_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_err.
 - **Scope:** Nur Raydium, RaydiumCpmm, MeteoraDlmm. Orca nicht. Hot Path bleibt GEYSER-ONLY (A.12). Kein Overclaim ueber Request/Reply, PumpFun, Orca oder komplettes IX-Layout.

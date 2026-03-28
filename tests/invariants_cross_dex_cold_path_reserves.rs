@@ -36,6 +36,7 @@ async fn raydium_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_er
     let quote_vault = Pubkey::new_unique();
     let market_id = Pubkey::new_unique();
 
+    // Fehlende Vault-Reserves: coin_reserve/pc_reserve None spiegeln keinen brauchbaren Quote-State.
     raydium.inject_cached_amm_state(
         pool_addr,
         base_mint,
@@ -44,6 +45,8 @@ async fn raydium_cold_path_known_pool_missing_reserves_rpc_unreachable_yields_er
         quote_vault,
         9,
         6,
+        None,
+        None,
         market_id,
         None,
         None,
