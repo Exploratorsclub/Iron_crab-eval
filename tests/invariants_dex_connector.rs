@@ -349,9 +349,14 @@ fn contract_pump_amm_build_ix_errors_when_protocol_fee_pubkeys_missing() {
         None,
     );
 
+    let err = result.expect_err("expected Err when protocol_fee_recipient and fee TA are default");
+    let msg = err.to_string();
     assert!(
-        result.is_err(),
-        "expected Err when protocol_fee_recipient and fee TA are default/missing, got {:?}",
-        result
+        msg.contains("protocol_fee_recipient") && msg.contains("protocol_fee_recipient_ta"),
+        "error should name both fee accounts; got: {msg}"
+    );
+    assert!(
+        msg.contains("missing") || msg.contains("observed fee"),
+        "error should indicate missing/unobserved fee accounts, not a generic build failure; got: {msg}"
     );
 }
