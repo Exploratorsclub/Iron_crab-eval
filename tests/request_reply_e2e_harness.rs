@@ -100,6 +100,10 @@ pub struct RequestReplyE2eHarness {
     nats_child: Option<Child>,
     market_data_child: Option<Child>,
     execution_engine_child: Option<Child>,
+    /// Stdout-/Stderr-Auszüge nach `stop()` (lebende Pipes werden nicht gelesen — verhindert Deadlocks).
+    nats_stdio_excerpt: Option<String>,
+    market_data_stdio_excerpt: Option<String>,
+    execution_engine_stdio_excerpt: Option<String>,
 }
 
 impl RequestReplyE2eHarness {
@@ -128,6 +132,9 @@ impl RequestReplyE2eHarness {
             nats_child: None,
             market_data_child: None,
             execution_engine_child: None,
+            nats_stdio_excerpt: None,
+            market_data_stdio_excerpt: None,
+            execution_engine_stdio_excerpt: None,
         })
     }
 
@@ -341,17 +348,31 @@ impl RequestReplyE2eHarness {
         Ok(())
     }
 
-    /// Stoppt alle Kindprozesse.
+    /// Stoppt alle Kindprozesse, wartet auf Exit und **liest danach** stdout/stderr bis EOF
+    /// (sicher — keine Blockade auf lebenden Pipes).
     pub fn stop(&mut self) {
-        let kill = |child: &mut Option<Child>, _name: &str| {
+        let stop_one = |child: &mut Option<Child>, cache: &mut Option<String>, name: &str| {
             if let Some(mut c) = child.take() {
                 let _ = c.kill();
                 let _ = c.wait();
+                *cache = Some(stdio_excerpt_from_child_after_exit(&mut c, name));
             }
         };
-        kill(&mut self.execution_engine_child, "execution-engine");
-        kill(&mut self.market_data_child, "market-data");
-        kill(&mut self.nats_child, "nats");
+        stop_one(
+            &mut self.execution_engine_child,
+            &mut self.execution_engine_stdio_excerpt,
+            "execution-engine",
+        );
+        stop_one(
+            &mut self.market_data_child,
+            &mut self.market_data_stdio_excerpt,
+            "market-data",
+        );
+        stop_one(
+            &mut self.nats_child,
+            &mut self.nats_stdio_excerpt,
+            "nats-server",
+        );
     }
 
     /// Prüft ob die Prozesse noch laufen.
@@ -386,31 +407,34 @@ impl RequestReplyE2eHarness {
         self._temp_dir.path()
     }
 
-    /// Blackbox-Diagnose **vor** `stop()`: konsumiert stdout/stderr der Kindprozesse (einmalig),
-    /// liest Auszüge aus `market_data_log` / `execution_engine_log`, optional NATS-stderr.
+    /// Blackbox-Diagnose nach `stop()`: verwendet die bei `stop()` erfassten stdout/stderr-Auszüge
+    /// (kein Lesen lebendiger Pipes — verhindert CI-Deadlocks bei `read_to_end`).
+    /// Liest zusätzlich Auszüge aus `market_data_log` / `execution_engine_log`.
     /// Nur für Eval-Timeouts — kein Impl-Code.
     #[allow(dead_code)]
     pub fn capture_eval_e2e_diagnostics(&mut self) -> String {
         let mut blocks = Vec::new();
 
-        if let Some(ref mut c) = self.execution_engine_child {
-            blocks.push(format!(
-                "--- execution-engine (stdout/stderr, Prozess) ---\n{}",
-                drain_child_stdio_excerpt(c, "execution-engine")
-            ));
-        }
-        if let Some(ref mut c) = self.market_data_child {
-            blocks.push(format!(
-                "--- market-data (stdout/stderr, Prozess) ---\n{}",
-                drain_child_stdio_excerpt(c, "market-data")
-            ));
-        }
-        if let Some(ref mut c) = self.nats_child {
-            blocks.push(format!(
-                "--- nats-server (stdout/stderr) ---\n{}",
-                drain_child_stdio_excerpt(c, "nats-server")
-            ));
-        }
+        let ee = self.execution_engine_stdio_excerpt.as_deref().unwrap_or(
+            "(stdout/stderr: noch nicht erfasst — vorher harness.stop() aufrufen; lebendige Pipes werden nicht gelesen)",
+        );
+        blocks.push(format!(
+            "--- execution-engine (stdout/stderr, nach stop) ---\n{ee}"
+        ));
+
+        let md = self.market_data_stdio_excerpt.as_deref().unwrap_or(
+            "(stdout/stderr: noch nicht erfasst — vorher harness.stop() aufrufen; lebendige Pipes werden nicht gelesen)",
+        );
+        blocks.push(format!(
+            "--- market-data (stdout/stderr, nach stop) ---\n{md}"
+        ));
+
+        let nats = self.nats_stdio_excerpt.as_deref().unwrap_or(
+            "(stdout/stderr: noch nicht erfasst — vorher harness.stop() aufrufen; lebendige Pipes werden nicht gelesen)",
+        );
+        blocks.push(format!(
+            "--- nats-server (stdout/stderr, nach stop) ---\n{nats}"
+        ));
 
         let md_log = self._temp_dir.path().join("market_data_log");
         let ee_log = self._temp_dir.path().join("execution_engine_log");
@@ -488,12 +512,13 @@ fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>, cap: usize) {
     }
 }
 
-fn drain_child_stdio_excerpt(child: &mut Child, name: &str) -> String {
+/// Nur nach `kill`+`wait` aufrufen: liest Pipes bis EOF (blockiert nicht endlos).
+fn stdio_excerpt_from_child_after_exit(child: &mut Child, name: &str) -> String {
     let mut parts = Vec::new();
     if let Ok(Some(st)) = child.try_wait() {
         parts.push(format!("exit={st:?}"));
     } else {
-        parts.push("läuft noch oder Status unbekannt".to_string());
+        parts.push("exit=unbekannt".to_string());
     }
     if let Some(mut p) = child.stdout.take() {
         let s = read_pipe_excerpt(&mut p);

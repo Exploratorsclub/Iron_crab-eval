@@ -545,8 +545,8 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
         intent_payload,
     ));
 
-    let diag = harness.capture_eval_e2e_diagnostics();
     harness.stop();
+    let diag = harness.capture_eval_e2e_diagnostics();
 
     if let Err(e) = result {
         panic!(
