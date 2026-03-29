@@ -17,13 +17,14 @@ use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use ironcrab::ipc::{MarketEvent, MarketEventKind};
 use ironcrab::nats::client::{NatsClient, NatsConfig};
 use ironcrab::nats::ensure_wallet_snapshot_stream;
 use ironcrab::nats::topics::wallet_snapshot_subject;
+use ironcrab::nats::WALLET_SNAPSHOT_STREAM_NAME;
 use solana_sdk::signer::keypair::Keypair;
 use solana_sdk::signer::EncodableKey;
 use solana_sdk::signer::Signer;
@@ -68,6 +69,12 @@ const STATUS_POLL_INTERVAL_MS: u64 = 300;
 const E2E_DIAG_TAIL_CHARS: usize = 4000;
 /// Max. Dateien pro Log-Baum (Determinismus).
 const E2E_DIAG_MAX_FILES_PER_TREE: usize = 12;
+
+/// Bounded wait: JetStream muss die geseedete Nachricht lesbar haben, **bevor** execution-engine
+/// startet — sonst kann `LastPerSubject`-Bootstrap eine leere erste Fetch-Runde sehen und
+/// `balance_raw=0` im LockManager bleiben (SIM_INSUFFICIENT_BALANCE).
+const WALLET_SNAPSHOT_JS_VISIBLE_TIMEOUT_SECS: u64 = 10;
+const WALLET_SNAPSHOT_JS_VISIBLE_POLL_MS: u64 = 100;
 
 /// Sucht das vorab gebaute Binary (reduziert Startlatenz vs. cargo run).
 fn find_binary(name: &str) -> Option<PathBuf> {
@@ -598,6 +605,94 @@ pub async fn seed_wallet_balance_snapshot_jetstream(
         ));
     }
     Ok(())
+}
+
+/// Blackbox-Nachweis: letzte JetStream-Nachricht für `wallet_snapshot_subject(wallet, mint)` im
+/// Stream `WALLET_SNAPSHOT` (ohne Impl in `Iron_crab/src/` zu lesen — nur öffentlicher Stream-Name
+/// + Subject-Helfer).
+#[allow(dead_code)]
+pub async fn probe_wallet_snapshot_jetstream_delivery(
+    nats_url: &str,
+    wallet: &str,
+    mint: &str,
+) -> Result<String, String> {
+    let subject = wallet_snapshot_subject(wallet, mint);
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (jetstream probe): {}", e))?;
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(WALLET_SNAPSHOT_STREAM_NAME)
+        .await
+        .map_err(|e| format!("get_stream {}: {}", WALLET_SNAPSHOT_STREAM_NAME, e))?;
+    let msg = stream
+        .get_last_raw_message_by_subject(&subject)
+        .await
+        .map_err(|e| format!("get_last_raw_message_by_subject {subject}: {e}"))?;
+    let payload = String::from_utf8_lossy(msg.payload.as_ref());
+    let tail = tail_string_chars(&payload, 600);
+    Ok(format!(
+        "stream={} subject={} payload_utf8_tail={tail}",
+        WALLET_SNAPSHOT_STREAM_NAME, subject
+    ))
+}
+
+/// Wartet bis die geseedete `WalletBalanceSnapshot`-Nachricht im JetStream-Stream materialisiert ist
+/// und `balance_raw` dem Erwartungswert entspricht (Read-after-Write vor EE-Start).
+#[allow(dead_code)]
+pub async fn wait_until_wallet_snapshot_visible_in_jetstream(
+    nats_url: &str,
+    wallet: &str,
+    mint: &str,
+    expected_balance_raw: u64,
+) -> Result<String, String> {
+    let subject = wallet_snapshot_subject(wallet, mint);
+    let deadline = Instant::now() + Duration::from_secs(WALLET_SNAPSHOT_JS_VISIBLE_TIMEOUT_SECS);
+    let mut last = String::new();
+
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (wait js snapshot): {}", e))?;
+    let jetstream = async_nats::jetstream::new(client);
+
+    while Instant::now() < deadline {
+        match jetstream.get_stream(WALLET_SNAPSHOT_STREAM_NAME).await {
+            Ok(stream) => match stream.get_last_raw_message_by_subject(&subject).await {
+                Ok(msg) => match serde_json::from_slice::<MarketEvent>(msg.payload.as_ref()) {
+                    Ok(event) => {
+                        if let MarketEventKind::WalletBalanceSnapshot { balance_raw, .. } =
+                            &event.kind
+                        {
+                            if *balance_raw == expected_balance_raw {
+                                return Ok(format!(
+                                    "JetStream read-after-write OK: stream={} subject={} balance_raw={}",
+                                    WALLET_SNAPSHOT_STREAM_NAME, subject, balance_raw
+                                ));
+                            }
+                            last = format!(
+                                "subject={subject} balance_raw={balance_raw} (erwartet {expected_balance_raw})"
+                            );
+                        } else {
+                            last =
+                                format!("subject={subject} kind ist nicht WalletBalanceSnapshot");
+                        }
+                    }
+                    Err(e) => last = format!("deserialize MarketEvent: {e}"),
+                },
+                Err(e) => last = format!("get_last_raw_message_by_subject {subject}: {e}"),
+            },
+            Err(e) => last = format!("get_stream {}: {}", WALLET_SNAPSHOT_STREAM_NAME, e),
+        }
+        tokio::time::sleep(Duration::from_millis(WALLET_SNAPSHOT_JS_VISIBLE_POLL_MS)).await;
+    }
+
+    Err(format!(
+        "Wallet-Snapshot nach {}s nicht im JetStream-Stream {} fuer subject {} lesbar oder balance mismatch. Letzter Stand: {}",
+        WALLET_SNAPSHOT_JS_VISIBLE_TIMEOUT_SECS,
+        WALLET_SNAPSHOT_STREAM_NAME,
+        subject,
+        last
+    ))
 }
 
 /// Wartet gebunden auf /status (HTTP 200). Bei Timeout: diagnostische Infos.

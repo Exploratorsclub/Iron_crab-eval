@@ -32,7 +32,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use common::request_reply_e2e_harness::{
-    seed_wallet_balance_snapshot_jetstream, RequestReplyE2eHarness,
+    probe_wallet_snapshot_jetstream_delivery, seed_wallet_balance_snapshot_jetstream,
+    wait_until_wallet_snapshot_visible_in_jetstream, RequestReplyE2eHarness,
 };
 use futures::StreamExt;
 use ironcrab::ipc::DecisionRecord;
@@ -502,6 +503,29 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
         ))
         .expect("wallet snapshot jetstream seed");
 
+    // Read-after-write: Snapshot muss im JetStream-Stream materialisiert sein, bevor EE startet —
+    // sonst kann `LastPerSubject`-Bootstrap eine leere erste Runde sehen (LockManager balance=0).
+    let js_wait_evidence = rt_setup
+        .block_on(wait_until_wallet_snapshot_visible_in_jetstream(
+            harness.nats_url(),
+            &wallet_pubkey,
+            &base_mint,
+            balance_raw,
+        ))
+        .unwrap_or_else(|e| {
+            let probe = rt_setup.block_on(probe_wallet_snapshot_jetstream_delivery(
+                harness.nats_url(),
+                &wallet_pubkey,
+                &base_mint,
+            ));
+            harness.stop();
+            let diag = harness.capture_eval_e2e_diagnostics();
+            panic!(
+                "JetStream Wallet-Snapshot nicht rechtzeitig sichtbar (EE nicht gestartet).\n{}\nJetStream-Probe: {:?}\n\n{}",
+                e, probe, diag
+            );
+        });
+
     harness
         .start_execution_engine_with_eval_wallet(&kp_path)
         .expect("execution-engine start with eval wallet");
@@ -545,13 +569,22 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
         intent_payload,
     ));
 
+    let js_probe_on_wire_failure = rt.block_on(probe_wallet_snapshot_jetstream_delivery(
+        &nats_url,
+        &wallet_pubkey,
+        &base_mint,
+    ));
+
     harness.stop();
     let diag = harness.capture_eval_e2e_diagnostics();
 
     if let Err(e) = result {
         panic!(
-            "A.43 E2E fehlgeschlagen (siehe Wire-Zusammenfassung unten).\n\n{}\n\n--- Harness-Prozess-Logs / stdout/stderr / log-dir ---\n{}",
-            e, diag
+            "A.43 E2E fehlgeschlagen (siehe Wire-Zusammenfassung unten).\n\n{}\n\n--- JetStream seed (vor EE-Start, read-after-write) ---\n{}\n--- JetStream-Probe Ende des Tests (letzte Msg auf Subject) ---\n{:?}\n\n--- Harness-Prozess-Logs / stdout/stderr / log-dir ---\n{}",
+            e,
+            js_wait_evidence,
+            js_probe_on_wire_failure,
+            diag
         );
     }
 }
