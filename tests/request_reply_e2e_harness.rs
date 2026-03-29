@@ -64,6 +64,11 @@ const STATUS_POLL_TIMEOUT_SECS: u64 = 60;
 /// Intervall zwischen /status-Polls (Millisekunden).
 const STATUS_POLL_INTERVAL_MS: u64 = 300;
 
+/// Eval-Diagnose: Zeichen pro Log-Datei-Ende / Pipe-Auszug.
+const E2E_DIAG_TAIL_CHARS: usize = 4000;
+/// Max. Dateien pro Log-Baum (Determinismus).
+const E2E_DIAG_MAX_FILES_PER_TREE: usize = 12;
+
 /// Sucht das vorab gebaute Binary (reduziert Startlatenz vs. cargo run).
 fn find_binary(name: &str) -> Option<PathBuf> {
     let path = iron_crab_root().join("target").join("debug").join(name);
@@ -380,6 +385,138 @@ impl RequestReplyE2eHarness {
     pub fn temp_dir_path(&self) -> &Path {
         self._temp_dir.path()
     }
+
+    /// Blackbox-Diagnose **vor** `stop()`: konsumiert stdout/stderr der Kindprozesse (einmalig),
+    /// liest Auszüge aus `market_data_log` / `execution_engine_log`, optional NATS-stderr.
+    /// Nur für Eval-Timeouts — kein Impl-Code.
+    #[allow(dead_code)]
+    pub fn capture_eval_e2e_diagnostics(&mut self) -> String {
+        let mut blocks = Vec::new();
+
+        if let Some(ref mut c) = self.execution_engine_child {
+            blocks.push(format!(
+                "--- execution-engine (stdout/stderr, Prozess) ---\n{}",
+                drain_child_stdio_excerpt(c, "execution-engine")
+            ));
+        }
+        if let Some(ref mut c) = self.market_data_child {
+            blocks.push(format!(
+                "--- market-data (stdout/stderr, Prozess) ---\n{}",
+                drain_child_stdio_excerpt(c, "market-data")
+            ));
+        }
+        if let Some(ref mut c) = self.nats_child {
+            blocks.push(format!(
+                "--- nats-server (stdout/stderr) ---\n{}",
+                drain_child_stdio_excerpt(c, "nats-server")
+            ));
+        }
+
+        let md_log = self._temp_dir.path().join("market_data_log");
+        let ee_log = self._temp_dir.path().join("execution_engine_log");
+        blocks.push(format!(
+            "--- market_data_log (Dateien) ---\n{}",
+            log_dir_tree_excerpts(&md_log, "market_data_log")
+        ));
+        blocks.push(format!(
+            "--- execution_engine_log (Dateien) ---\n{}",
+            log_dir_tree_excerpts(&ee_log, "execution_engine_log")
+        ));
+
+        blocks.join("\n\n")
+    }
+}
+
+fn tail_string_chars(s: &str, max_chars: usize) -> String {
+    let v: Vec<char> = s.chars().collect();
+    if v.len() <= max_chars {
+        return s.to_string();
+    }
+    v[v.len().saturating_sub(max_chars)..].iter().collect()
+}
+
+fn read_file_tail_utf8(path: &Path, max_chars: usize) -> String {
+    let Ok(bytes) = fs::read(path) else {
+        return format!("(read error: {})", path.display());
+    };
+    let s = String::from_utf8_lossy(&bytes);
+    tail_string_chars(&s, max_chars)
+}
+
+fn log_dir_tree_excerpts(root: &Path, label: &str) -> String {
+    if !root.exists() {
+        return format!("({label}: Verzeichnis fehlt: {})", root.display());
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_files_recursive(root, &mut files, E2E_DIAG_MAX_FILES_PER_TREE * 4);
+    files.sort();
+    files.truncate(E2E_DIAG_MAX_FILES_PER_TREE);
+    if files.is_empty() {
+        return format!("({label}: keine Dateien unter {})", root.display());
+    }
+    let mut out = String::new();
+    for p in files {
+        let excerpt = read_file_tail_utf8(&p, E2E_DIAG_TAIL_CHARS);
+        out.push_str(&format!(
+            "\n>> {} (letzte ~{} Zeichen)\n{}\n",
+            p.display(),
+            E2E_DIAG_TAIL_CHARS,
+            excerpt
+        ));
+    }
+    out
+}
+
+fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>, cap: usize) {
+    if out.len() >= cap {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(dir) else {
+        return;
+    };
+    for ent in rd.flatten() {
+        if out.len() >= cap {
+            break;
+        }
+        let p = ent.path();
+        let meta = ent.metadata().ok();
+        if meta.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
+            collect_files_recursive(&p, out, cap);
+        } else if meta.as_ref().map(|m| m.is_file()).unwrap_or(false) {
+            out.push(p);
+        }
+    }
+}
+
+fn drain_child_stdio_excerpt(child: &mut Child, name: &str) -> String {
+    let mut parts = Vec::new();
+    if let Ok(Some(st)) = child.try_wait() {
+        parts.push(format!("exit={st:?}"));
+    } else {
+        parts.push("läuft noch oder Status unbekannt".to_string());
+    }
+    if let Some(mut p) = child.stdout.take() {
+        let s = read_pipe_excerpt(&mut p);
+        if !s.trim().is_empty() {
+            parts.push(format!(
+                "stdout tail:\n{}",
+                tail_string_chars(&s, E2E_DIAG_TAIL_CHARS)
+            ));
+        }
+    }
+    if let Some(mut p) = child.stderr.take() {
+        let s = read_pipe_excerpt(&mut p);
+        if !s.trim().is_empty() {
+            parts.push(format!(
+                "stderr tail:\n{}",
+                tail_string_chars(&s, E2E_DIAG_TAIL_CHARS)
+            ));
+        }
+    }
+    if parts.len() == 1 {
+        parts.push(format!("({name}: keine stdout/stderr-Daten gelesen)"));
+    }
+    parts.join("\n")
 }
 
 /// JetStream: `WalletBalanceSnapshot` auf `ironcrab.wallet_snapshot.{wallet}.{mint}` (öffentliche

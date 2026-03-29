@@ -35,17 +35,21 @@ use common::request_reply_e2e_harness::{
     seed_wallet_balance_snapshot_jetstream, RequestReplyE2eHarness,
 };
 use futures::StreamExt;
+use ironcrab::ipc::DecisionRecord;
 use ironcrab::ipc::{
     ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus, ExplicitAmount,
     IntentOrigin, IntentTier, TradeIntent, TradeResources, TradeSide, TradingRegime,
 };
 use ironcrab::nats::topics::{
-    TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES, TOPIC_TRADE_INTENTS,
+    TOPIC_CONTROL_REQUESTS, TOPIC_CONTROL_RESPONSES, TOPIC_DECISION_RECORDS, TOPIC_TRADE_INTENTS,
 };
 use solana_sdk::pubkey::Pubkey;
 
 /// Timeout für Response-Empfang (Sekunden).
 const RESPONSE_TIMEOUT_SECS: u64 = 15;
+
+/// Kurzer Poll auf DecisionRecords nach A.43-Timeout (Blackbox: `TOPIC_DECISION_RECORDS`).
+const DECISION_RECORD_POLL_SECS: u64 = 2;
 
 /// Absichtlich nicht auflösbare base_mint (Cold-Path Ensure* liefert typischerweise not_found).
 const UNRESOLVABLE_BASE_MINT: &str = "11111111111111111111111111111111";
@@ -120,6 +124,67 @@ async fn wait_for_correlated_market_data_response(
     }
 }
 
+/// Nach Timeout: optional `DecisionRecord` suchen, dessen JSON `intent_id` enthält (Substring-Scan).
+async fn poll_decision_record_snippet_for_intent(
+    nats_url: &str,
+    intent_id: &str,
+) -> Option<String> {
+    let client = async_nats::connect(nats_url).await.ok()?;
+    let mut sub = client
+        .subscribe(TOPIC_DECISION_RECORDS.to_string())
+        .await
+        .ok()?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(DECISION_RECORD_POLL_SECS);
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let msg = tokio::time::timeout(remaining, sub.next()).await.ok()??;
+        let payload = msg.payload.as_ref();
+        let lossy = String::from_utf8_lossy(payload);
+        if !lossy.contains(intent_id) {
+            continue;
+        }
+        if let Ok(rec) = serde_json::from_slice::<DecisionRecord>(payload) {
+            return Some(format!(
+                "DecisionRecord: intent_id={} outcome={:?} primary_reject_reason={:?}",
+                rec.intent_id, rec.outcome, rec.primary_reject_reason
+            ));
+        }
+        return Some(format!(
+            "DecisionRecord-Topic: Payload enthält intent_id-Substring, JSON-Parse fehlgeschlagen (erste 500 Zeichen): {}",
+            tail_chars(&lossy, 500)
+        ));
+    }
+    None
+}
+
+fn tail_chars(s: &str, max_chars: usize) -> String {
+    let v: Vec<char> = s.chars().collect();
+    if v.len() <= max_chars {
+        return s.to_string();
+    }
+    v[v.len().saturating_sub(max_chars)..].iter().collect()
+}
+
+fn control_request_one_line_summary(req: &ControlRequest) -> String {
+    let kind = match &req.kind {
+        ControlRequestKind::EnsurePumpAmmPoolAccounts { base_mint } => {
+            format!("EnsurePumpAmmPoolAccounts base_mint={base_mint}")
+        }
+        _ => format!("{:?}", req.kind),
+    };
+    format!(
+        "target={} hint={:?} | {}",
+        req.target, req.pool_address_hint, kind
+    )
+}
+
+fn control_response_one_line(resp: &ControlResponse) -> String {
+    format!(
+        "target={} request_id={} status={:?}",
+        resp.target, resp.request_id, resp.status
+    )
+}
+
 /// A.43: Wenn das merged Preplan-Gate greift (siehe Modul-Doku), erscheint ein korreliertes
 /// `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == pools[0]` und terminale `ControlResponse`
 /// von `market-data`. Zwei Topics, race-sicher, `tokio::time::timeout` pro Iteration.
@@ -127,6 +192,7 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
     nats_url: &str,
     base_mint: &str,
     pool_address: &str,
+    intent_id: &str,
     intent_payload: Vec<u8>,
 ) -> Result<(), String> {
     let client = async_nats::connect(nats_url)
@@ -151,14 +217,18 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
     // Response vor zugehoerigem Ensure-Request (Race auf zwei Topics).
     let mut pending_terminal: HashSet<String> = HashSet::new();
 
+    let mut saw_control_req_market_data = false;
+    let mut saw_other_ensure_pump = false;
+    let mut saw_terminal_md_response = false;
+    let mut recent_req_lines: Vec<String> = Vec::new();
+    let mut recent_resp_lines: Vec<String> = Vec::new();
+    const WIRE_RECENT_CAP: usize = 6;
+
     let deadline = tokio::time::Instant::now() + Duration::from_secs(RESPONSE_TIMEOUT_SECS);
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            return Err(format!(
-                "timeout A.43: kein EnsurePumpAmmPoolAccounts+hint oder keine korrelierte market-data-Response nach {}s (base_mint={base_mint}, pool={pool_address})",
-                RESPONSE_TIMEOUT_SECS
-            ));
+            break;
         }
 
         enum Branch {
@@ -187,12 +257,7 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
         let branch = match branch {
             Ok(Ok(b)) => b,
             Ok(Err(e)) => return Err(e),
-            Err(_) => {
-                return Err(format!(
-                    "timeout A.43: kein EnsurePumpAmmPoolAccounts+hint oder keine korrelierte market-data-Response nach {}s (base_mint={base_mint}, pool={pool_address})",
-                    RESPONSE_TIMEOUT_SECS
-                ));
-            }
+            Err(_) => continue,
         };
 
         match branch {
@@ -201,6 +266,14 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
                     Ok(r) => r,
                     Err(_) => continue,
                 };
+                if req.target == "market-data" {
+                    saw_control_req_market_data = true;
+                    let line = control_request_one_line_summary(&req);
+                    recent_req_lines.push(line);
+                    if recent_req_lines.len() > WIRE_RECENT_CAP {
+                        recent_req_lines.remove(0);
+                    }
+                }
                 if req.target != "market-data" {
                     continue;
                 }
@@ -209,6 +282,13 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
                     &req.kind,
                     ControlRequestKind::EnsurePumpAmmPoolAccounts { base_mint: bm } if bm == base_mint
                 );
+                if matches!(
+                    &req.kind,
+                    ControlRequestKind::EnsurePumpAmmPoolAccounts { .. }
+                ) && !(hint_ok && kind_ok)
+                {
+                    saw_other_ensure_pump = true;
+                }
                 if !(hint_ok && kind_ok) {
                     continue;
                 }
@@ -222,6 +302,13 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
                     Ok(r) => r,
                     Err(_) => continue,
                 };
+                if resp.target == "market-data" {
+                    let line = control_response_one_line(&resp);
+                    recent_resp_lines.push(line);
+                    if recent_resp_lines.len() > WIRE_RECENT_CAP {
+                        recent_resp_lines.remove(0);
+                    }
+                }
                 if resp.target != "market-data" {
                     continue;
                 }
@@ -231,6 +318,9 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
                         | ControlResponseStatus::NotFound
                         | ControlResponseStatus::Error
                 );
+                if terminal {
+                    saw_terminal_md_response = true;
+                }
                 if !terminal {
                     continue;
                 }
@@ -241,6 +331,58 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
             }
         }
     }
+
+    let dr = poll_decision_record_snippet_for_intent(nats_url, intent_id).await;
+    let mut msg = format!(
+        "timeout A.43: kein EnsurePumpAmmPoolAccounts+hint oder keine korrelierte market-data-Response nach {}s\nintent_id={intent_id}\nbase_mint={base_mint}\npool_hint_expected={pool_address}\n",
+        RESPONSE_TIMEOUT_SECS
+    );
+    msg.push_str("--- Wire-Beobachtung (Eval-Test-Subscriber) ---\n");
+    msg.push_str(&format!(
+        "saw_any_ControlRequest target=market-data: {}\n",
+        saw_control_req_market_data
+    ));
+    msg.push_str(&format!(
+        "saw_EnsurePumpAmmPoolAccounts_aber_hint/base_mint_passen_nicht: {}\n",
+        saw_other_ensure_pump
+    ));
+    msg.push_str(&format!(
+        "saw_terminal_ControlResponse target=market-data: {}\n",
+        saw_terminal_md_response
+    ));
+    msg.push_str(&format!(
+        "pending_terminal_request_ids_unmatched: {:?}\n",
+        pending_terminal
+    ));
+    if !recent_req_lines.is_empty() {
+        msg.push_str("letzte market-data ControlRequests (Auszug):\n");
+        for l in &recent_req_lines {
+            msg.push_str(&format!("  - {}\n", l));
+        }
+    } else {
+        msg.push_str("letzte market-data ControlRequests: (keine)\n");
+    }
+    if !recent_resp_lines.is_empty() {
+        msg.push_str("letzte market-data ControlResponses (Auszug):\n");
+        for l in &recent_resp_lines {
+            msg.push_str(&format!("  - {}\n", l));
+        }
+    } else {
+        msg.push_str("letzte market-data ControlResponses: (keine)\n");
+    }
+    msg.push_str("--- DecisionRecord (TOPIC_DECISION_RECORDS, kurz) ---\n");
+    match dr {
+        Some(s) => msg.push_str(&s),
+        None => msg.push_str("(kein passender Eintrag innerhalb 2s oder Topic leer)"),
+    }
+    msg.push_str(
+        "\n--- Interpretationshilfe (kein Impl-Claim) ---\n\
+         1) Kein Intent-Verbrauch: typisch keine DecisionRecord-Zeile, oft auch keine relevanten Control-Messages.\n\
+         2) Reject vor Preplan: DecisionRecord mit outcome rejected + primary_reject_reason; ggf. keine passende Ensure-Zeile.\n\
+         3) Ensure publiziert aber Test sieht nichts: saw_any_ControlRequest false trotz DecisionRecord — Subscription/Timing.\n\
+         4) Ensure ohne Response: passende Ensure-Zeile, aber keine korrelierte terminale Response.\n",
+    );
+    Err(msg)
 }
 
 fn skip_if_no_sibling_iron_crab() -> Option<PathBuf> {
@@ -390,6 +532,7 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
     md.insert("dex".to_string(), "pump_amm".to_string());
     intent.metadata = md;
 
+    let intent_id = intent.intent_id.clone();
     let intent_payload = serde_json::to_vec(&intent).expect("serialize TradeIntent (A.43)");
 
     let nats_url = harness.nats_url().to_string();
@@ -398,14 +541,19 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
         &nats_url,
         &base_mint,
         &pool_address,
+        &intent_id,
         intent_payload,
     ));
 
+    let diag = harness.capture_eval_e2e_diagnostics();
     harness.stop();
 
-    result.expect(
-        "A.43: EnsurePumpAmmPoolAccounts mit pool_address_hint aus pools[0] und market-data-Response",
-    );
+    if let Err(e) = result {
+        panic!(
+            "A.43 E2E fehlgeschlagen (siehe Wire-Zusammenfassung unten).\n\n{}\n\n--- Harness-Prozess-Logs / stdout/stderr / log-dir ---\n{}",
+            e, diag
+        );
+    }
 }
 
 /// Raydium AMM v4: EnsureRaydiumAmmPoolState → market-data → korrelierte terminale ControlResponse.
