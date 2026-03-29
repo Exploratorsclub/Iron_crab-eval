@@ -11,11 +11,15 @@
 //! Erweiterte Felder (`force_refresh`, `pool_address_hint` auf `ControlRequest`) werden separat
 //! in `ipc_schema_serde` roundtrip-getestet; der Basis-E2E-Test nutzt weiterhin nur `base_mint` (minimal).
 //!
-//! **A.43 (schmal, merged impl / PR #67):** PumpSwap Cold-Path-Recovery vor `build_tx_plan` fuer den
-//! engen Shape: `metadata.sell_all=true`, `metadata.dex=pump_amm`, explizites `resources.pools[0]`,
-//! **leeres** `resources.accounts` (pre-plan Discovery wenn SLAVE-Hint-Pool fuer tx_builder nicht
-//! reicht). Wire-Slice: `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == pools[0]` und
-//! korrelierte terminale `ControlResponse` von `market-data`.
+//! **A.43 (schmal, merged PR #67):** Vor dem **ersten** `build_tx_plan` loest die execution-engine
+//! bounded PumpSwap-Preplan-Discovery nur unter einem **engeren** Gate (u.a. kein Replay-Modus,
+//! noch kein Preplan-Versuch, Cold-Path-Recovery-Sell, `metadata.dex=pump_amm`,
+//! `resources.accounts.is_empty()`, `resources.pools.len() == 1`, Hint-Pool-Zeile fuer den
+//! tx_builder noch unbrauchbar). Dann: `EnsurePumpAmmPoolAccounts` mit
+//! `pool_address_hint = pools[0]`, bounded Wait, ein Retry der Plan/Sim-Schleife.
+//! **Blackbox-E2E:** Nur der Wire-Slice Intent → `EnsurePumpAmmPoolAccounts` + korrelierte terminale
+//! `ControlResponse` (`market-data`). Nicht-leere `resources.accounts` **unterbinden** das Gate
+//! (typischer CI-Timeout: kein Ensure sichtbar).
 //!
 //! STOP-CHECK: Nur Eval-Repo, kein Impl-Code, Blackbox an API-Grenze.
 
@@ -106,9 +110,9 @@ async fn wait_for_correlated_market_data_response(
     }
 }
 
-/// A.43: Nach PumpSwap-Cold-Path-Intent (PR #67 narrow: sell_all + dex + pools[0], leere accounts)
-/// muss ein korreliertes `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == pools[0]` erscheinen
-/// und `market-data` terminal antworten. Zwei Topics, race-sicher, bounded wait.
+/// A.43: Wenn das merged Preplan-Gate greift (siehe Modul-Doku), erscheint ein korreliertes
+/// `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == pools[0]` und terminale `ControlResponse`
+/// von `market-data`. Zwei Topics, race-sicher, `tokio::time::timeout` pro Iteration.
 async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
     nats_url: &str,
     base_mint: &str,
@@ -296,8 +300,10 @@ fn request_reply_contract_market_data_responds() {
     result.expect("Request/Reply Contract: market-data muss korreliert antworten (PumpSwap)");
 }
 
-/// A.43: PumpSwap sell_all + pump_amm + pools[0], `resources.accounts` leer (merged narrow slice)
-/// → `EnsurePumpAmmPoolAccounts` + `pool_address_hint` → terminale market-data-ControlResponse.
+/// A.43 E2E: SELL-Intent mit genau dem **oeffentlichen** Shape, das das merged Preplan-Gate erwartet:
+/// `metadata.sell_all=true`, `metadata.dex=pump_amm`, `resources.pools.len()==1`, `resources.accounts`
+/// **leer** (nicht-leer → Gate greift nicht → Timeout ohne Ensure). `source=sell-all` wie typisches
+/// Tooling; kein Claim, dass nur dieser `source` zulaessig ist.
 #[test]
 fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
     if skip_if_no_sibling_iron_crab().is_none() {
