@@ -19,7 +19,9 @@
 //! `pool_address_hint = pools[0]`, bounded Wait, ein Retry der Plan/Sim-Schleife.
 //! **Blackbox-E2E:** Nur der Wire-Slice Intent → `EnsurePumpAmmPoolAccounts` + korrelierte terminale
 //! `ControlResponse` (`market-data`). Nicht-leere `resources.accounts` **unterbinden** das Gate
-//! (typischer CI-Timeout: kein Ensure sichtbar).
+//! (typischer CI-Timeout: kein Ensure sichtbar). Der Harness startet die execution-engine mit
+//! Fixture-Keypair (`IRONCRAB_KEYPAIR_PATH`) und seedet vorher ein JetStream-`WalletBalanceSnapshot`
+//! fuer Mint+Wallet, damit SELL-Preflight und LockManager-Balance den Preplan-Pfad erreichen.
 //!
 //! STOP-CHECK: Nur Eval-Repo, kein Impl-Code, Blackbox an API-Grenze.
 
@@ -29,7 +31,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use common::request_reply_e2e_harness::RequestReplyE2eHarness;
+use common::request_reply_e2e_harness::{
+    seed_wallet_balance_snapshot_jetstream, RequestReplyE2eHarness,
+};
 use futures::StreamExt;
 use ironcrab::ipc::{
     ControlRequest, ControlRequestKind, ControlResponse, ControlResponseStatus, ExplicitAmount,
@@ -47,6 +51,12 @@ const RESPONSE_TIMEOUT_SECS: u64 = 15;
 const UNRESOLVABLE_BASE_MINT: &str = "11111111111111111111111111111111";
 
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
+
+/// SPL Token classic (WalletBalanceSnapshot / TradeResources-Doku).
+const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+/// Decimals fuer den geseedeten Token-Snapshot (muss zu `ExplicitAmount` im Intent passieren).
+const A43_TOKEN_DECIMALS: u8 = 6;
 
 /// Bounded Poll auf `TOPIC_CONTROL_RESPONSES`: wartet auf `ControlResponse` mit passender
 /// `request_id`, `target == "market-data"`, und terminalem Status (ok | not_found | error).
@@ -319,9 +329,10 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
         panic!("nats start: {}", e);
     }
     harness.start_market_data().expect("market-data start");
-    harness
-        .start_execution_engine()
-        .expect("execution-engine start");
+
+    let (kp_path, wallet_pubkey) = harness
+        .write_eval_treasury_keypair()
+        .expect("fixture keypair");
 
     let token_mint_pk = Pubkey::new_unique();
     let base_mint = token_mint_pk.to_string();
@@ -335,6 +346,23 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
         accounts: vec![],
         token_program: None,
     };
+
+    let balance_raw: u64 = 10_000_000;
+    let rt_setup = tokio::runtime::Runtime::new().expect("runtime");
+    rt_setup
+        .block_on(seed_wallet_balance_snapshot_jetstream(
+            harness.nats_url(),
+            &wallet_pubkey,
+            &base_mint,
+            balance_raw,
+            A43_TOKEN_DECIMALS,
+            SPL_TOKEN_PROGRAM,
+        ))
+        .expect("wallet snapshot jetstream seed");
+
+    harness
+        .start_execution_engine_with_eval_wallet(&kp_path)
+        .expect("execution-engine start with eval wallet");
 
     let mut intent = TradeIntent::new(
         "ironcrab-eval",
@@ -350,7 +378,7 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
         "sell-all",
         IntentTier::Tier0,
         IntentOrigin::StrategyA,
-        ExplicitAmount::new(1_000_000, 6),
+        ExplicitAmount::new(balance_raw, A43_TOKEN_DECIMALS),
         resources,
         0,
         500,
