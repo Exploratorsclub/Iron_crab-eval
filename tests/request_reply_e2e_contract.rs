@@ -11,11 +11,11 @@
 //! Erweiterte Felder (`force_refresh`, `pool_address_hint` auf `ControlRequest`) werden separat
 //! in `ipc_schema_serde` roundtrip-getestet; der Basis-E2E-Test nutzt weiterhin nur `base_mint` (minimal).
 //!
-//! **A.43 (schmal):** Manueller PumpSwap-sell-all-Cold-Path (`source=sell-all`, `metadata.sell_all` /
-//! `dex=pump_amm`, `resources.pools[0]`, mindestens ein `resources.accounts`-Eintrag fuer die
-//! Quell-ATA, `resources.token_program` fuer SPL-Token laut oeffentlicher `TradeResources`-Doku):
-//! Wire-Slice → `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == pools[0]` und korrelierte
-//! terminale `ControlResponse` von `market-data`. Kein Claim ueber andere SELL-Pfade.
+//! **A.43 (schmal, merged impl / PR #67):** PumpSwap Cold-Path-Recovery vor `build_tx_plan` fuer den
+//! engen Shape: `metadata.sell_all=true`, `metadata.dex=pump_amm`, explizites `resources.pools[0]`,
+//! **leeres** `resources.accounts` (pre-plan Discovery wenn SLAVE-Hint-Pool fuer tx_builder nicht
+//! reicht). Wire-Slice: `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == pools[0]` und
+//! korrelierte terminale `ControlResponse` von `market-data`.
 //!
 //! STOP-CHECK: Nur Eval-Repo, kein Impl-Code, Blackbox an API-Grenze.
 
@@ -43,9 +43,6 @@ const RESPONSE_TIMEOUT_SECS: u64 = 15;
 const UNRESOLVABLE_BASE_MINT: &str = "11111111111111111111111111111111";
 
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
-
-/// SPL Token (classic): laut `ironcrab::ipc::TradeResources::token_program`-Rustdoc.
-const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 /// Bounded Poll auf `TOPIC_CONTROL_RESPONSES`: wartet auf `ControlResponse` mit passender
 /// `request_id`, `target == "market-data"`, und terminalem Status (ok | not_found | error).
@@ -109,10 +106,9 @@ async fn wait_for_correlated_market_data_response(
     }
 }
 
-/// A.43: Nach plausibelem sell-all PumpSwap-Intent (siehe Testbody: `source`, Metadaten, ATA,
-/// `token_program`) muss ein korreliertes `EnsurePumpAmmPoolAccounts` mit
-/// `pool_address_hint == resources.pools[0]` erscheinen und `market-data` mit terminalem Status
-/// antworten. Request/Response-Reihenfolge über zwei Topics (Race-sicher).
+/// A.43: Nach PumpSwap-Cold-Path-Intent (PR #67 narrow: sell_all + dex + pools[0], leere accounts)
+/// muss ein korreliertes `EnsurePumpAmmPoolAccounts` mit `pool_address_hint == pools[0]` erscheinen
+/// und `market-data` terminal antworten. Zwei Topics, race-sicher, bounded wait.
 async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
     nats_url: &str,
     base_mint: &str,
@@ -300,8 +296,8 @@ fn request_reply_contract_market_data_responds() {
     result.expect("Request/Reply Contract: market-data muss korreliert antworten (PumpSwap)");
 }
 
-/// A.43: Manueller PumpSwap-sell-all-Cold-Path (sell-all + sell_all/dex-Metadaten, ATA + token_program)
-/// → ControlRequest mit `pool_address_hint == resources.pools[0]` → terminale market-data-ControlResponse.
+/// A.43: PumpSwap sell_all + pump_amm + pools[0], `resources.accounts` leer (merged narrow slice)
+/// → `EnsurePumpAmmPoolAccounts` + `pool_address_hint` → terminale market-data-ControlResponse.
 #[test]
 fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
     if skip_if_no_sibling_iron_crab().is_none() {
@@ -325,15 +321,13 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
     let base_mint = token_mint_pk.to_string();
     let pool_address_pk = Pubkey::new_unique();
     let pool_address = pool_address_pk.to_string();
-    let user_source_ata = Pubkey::new_unique();
-    let user_source_ata_str = user_source_ata.to_string();
 
     let resources = TradeResources {
         input_mint: base_mint.clone(),
         output_mint: WSOL_MINT.to_string(),
         pools: vec![pool_address.clone()],
-        accounts: vec![user_source_ata_str.clone()],
-        token_program: Some(SPL_TOKEN_PROGRAM.to_string()),
+        accounts: vec![],
+        token_program: None,
     };
 
     let mut intent = TradeIntent::new(
@@ -360,8 +354,6 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
     let mut md = HashMap::new();
     md.insert("sell_all".to_string(), "true".to_string());
     md.insert("dex".to_string(), "pump_amm".to_string());
-    md.insert("token_account".to_string(), user_source_ata_str);
-    md.insert("token_program".to_string(), SPL_TOKEN_PROGRAM.to_string());
     intent.metadata = md;
 
     let intent_payload = serde_json::to_vec(&intent).expect("serialize TradeIntent (A.43)");
