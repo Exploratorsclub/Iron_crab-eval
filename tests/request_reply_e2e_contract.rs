@@ -152,18 +152,32 @@ async fn wait_for_manual_pumpswap_cold_path_control_roundtrip(
             Resp(async_nats::Message),
         }
 
-        let branch = tokio::select! {
-            m = sub_req.next() => {
-                match m {
-                    Some(msg) => Branch::Req(msg),
-                    None => return Err("control_requests stream ended".to_string()),
+        let branch = tokio::time::timeout(remaining, async {
+            tokio::select! {
+                m = sub_req.next() => {
+                    match m {
+                        Some(msg) => Ok(Branch::Req(msg)),
+                        None => Err("control_requests stream ended".to_string()),
+                    }
+                }
+                m = sub_resp.next() => {
+                    match m {
+                        Some(msg) => Ok(Branch::Resp(msg)),
+                        None => Err("control_responses stream ended".to_string()),
+                    }
                 }
             }
-            m = sub_resp.next() => {
-                match m {
-                    Some(msg) => Branch::Resp(msg),
-                    None => return Err("control_responses stream ended".to_string()),
-                }
+        })
+        .await;
+
+        let branch = match branch {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(format!(
+                    "timeout A.43: kein EnsurePumpAmmPoolAccounts+hint oder keine korrelierte market-data-Response nach {}s (base_mint={base_mint}, pool={pool_address})",
+                    RESPONSE_TIMEOUT_SECS
+                ));
             }
         };
 
