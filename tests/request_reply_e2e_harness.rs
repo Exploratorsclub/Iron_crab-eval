@@ -6,6 +6,11 @@
 //!
 //! Kein Lesen von Iron_crab/src/ oder Iron_crab/tests/.
 //! Keine Assertions auf Implementierungsdetails.
+//!
+//! **A.43 / SELL-E2E:** `start_execution_engine_with_eval_wallet` schreibt ein deterministisches
+//! Fixture-Keypair und setzt `IRONCRAB_KEYPAIR_PATH` (öffentlicher Binär-Vertrag + ROLE_SEPARATION).
+//! `seed_wallet_balance_snapshot_jetstream` publiziert `MarketEventKind::WalletBalanceSnapshot` per
+//! `NatsClient::jetstream_publish` auf `wallet_snapshot_subject` (JetStream-SSOT, vgl. Topic-Rustdoc).
 
 use std::fs;
 use std::io::Read;
@@ -15,6 +20,13 @@ use std::process::{Child, Command};
 use std::time::Duration;
 
 use futures::StreamExt;
+use ironcrab::ipc::{MarketEvent, MarketEventKind};
+use ironcrab::nats::client::{NatsClient, NatsConfig};
+use ironcrab::nats::ensure_wallet_snapshot_stream;
+use ironcrab::nats::topics::wallet_snapshot_subject;
+use solana_sdk::signer::keypair::Keypair;
+use solana_sdk::signer::EncodableKey;
+use solana_sdk::signer::Signer;
 
 /// Pfad zu Iron_crab (Geschwister-Ordner). Wie golden_replay_blackbox.rs.
 fn iron_crab_root() -> PathBuf {
@@ -248,6 +260,82 @@ impl RequestReplyE2eHarness {
         Ok(())
     }
 
+    /// Schreibt ein deterministisches Eval-Treasury-Keypair (kein Mainnet-Wert) und gibt Pfad +
+    /// Wallet-Pubkey (base58) zurück. Für SELL-E2E vor `start_execution_engine_with_eval_wallet`.
+    #[allow(dead_code)] // genutzt von `request_reply_e2e_contract`; Harness wird in mehreren Test-Binaries gelinkt
+    pub fn write_eval_treasury_keypair(&self) -> Result<(PathBuf, String), String> {
+        let kp_path = self._temp_dir.path().join("eval_e2e_treasury.json");
+        // Festes Fixture-Secret (nur Eval); niemals fuer echte Gelder verwenden.
+        let kp = Keypair::new_from_array([42u8; 32]);
+        kp.write_to_file(&kp_path)
+            .map_err(|e| format!("write fixture keypair {}: {}", kp_path.display(), e))?;
+        let wallet = kp.pubkey().to_string();
+        Ok((kp_path, wallet))
+    }
+
+    /// Wie `start_execution_engine`, aber mit `IRONCRAB_KEYPAIR_PATH` auf die Fixture-Datei
+    /// (Wallet-Pubkey verfügbar, weiterhin `--dry-run`).
+    #[allow(dead_code)]
+    pub fn start_execution_engine_with_eval_wallet(
+        &mut self,
+        keypair_path: &Path,
+    ) -> Result<(), String> {
+        let log_dir = self._temp_dir.path().join("execution_engine_log");
+        fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir: {}", e))?;
+
+        let kp = keypair_path
+            .to_str()
+            .ok_or_else(|| "keypair path not utf-8".to_string())?;
+
+        let args = [
+            "--nats-url",
+            &self.nats_url,
+            "--dry-run",
+            "--metrics-port",
+            &self.execution_engine_metrics_port.to_string(),
+            "--log-dir",
+            log_dir.to_str().unwrap(),
+        ];
+
+        let child = if let Some(bin) = find_binary("execution-engine") {
+            Command::new(bin)
+                .env("IRONCRAB_KEYPAIR_PATH", kp)
+                .args(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        } else {
+            let manifest = iron_crab_root().join("Cargo.toml");
+            if !manifest.exists() {
+                return Err(format!("Iron_crab nicht gefunden: {:?}", iron_crab_root()));
+            }
+            Command::new("cargo")
+                .env("IRONCRAB_KEYPAIR_PATH", kp)
+                .args([
+                    "run",
+                    "--manifest-path",
+                    manifest.to_str().unwrap(),
+                    "--bin",
+                    "execution-engine",
+                    "--",
+                ])
+                .args(args)
+                .current_dir(iron_crab_root().parent().unwrap())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        }
+        .map_err(|e| format!("execution-engine spawn: {}", e))?;
+
+        self.execution_engine_child = Some(child);
+        wait_for_component_status(
+            self.execution_engine_metrics_port,
+            "execution-engine",
+            &mut self.execution_engine_child,
+        )?;
+        Ok(())
+    }
+
     /// Stoppt alle Kindprozesse.
     pub fn stop(&mut self) {
         let kill = |child: &mut Option<Child>, _name: &str| {
@@ -292,6 +380,62 @@ impl RequestReplyE2eHarness {
     pub fn temp_dir_path(&self) -> &Path {
         self._temp_dir.path()
     }
+}
+
+/// JetStream: `WalletBalanceSnapshot` auf `ironcrab.wallet_snapshot.{wallet}.{mint}` (öffentliche
+/// Topic-Helfer + `ensure_wallet_snapshot_stream`). Blackbox-Seed für LockManager-Token-Saldo.
+#[allow(dead_code)]
+pub async fn seed_wallet_balance_snapshot_jetstream(
+    nats_url: &str,
+    wallet: &str,
+    mint: &str,
+    balance_raw: u64,
+    decimals: u8,
+    token_program: &str,
+) -> Result<(), String> {
+    let mut nats = NatsClient::new(NatsConfig::new(
+        nats_url,
+        "ironcrab-eval-wallet-snapshot-seed",
+    ));
+    nats.connect()
+        .await
+        .map_err(|e| format!("nats connect (wallet snapshot seed): {}", e))?;
+    ensure_wallet_snapshot_stream(nats.client())
+        .await
+        .map_err(|e| format!("ensure_wallet_snapshot_stream: {}", e))?;
+
+    let event = MarketEvent::new(
+        "ironcrab-eval",
+        "e2e-harness",
+        "wallet-seed",
+        format!(
+            "evt-wsnap-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ),
+        "eval-harness",
+        Some(1),
+        MarketEventKind::WalletBalanceSnapshot {
+            mint: mint.to_string(),
+            balance_raw,
+            decimals,
+            token_program: token_program.to_string(),
+        },
+    );
+    let subject = wallet_snapshot_subject(wallet, mint);
+    let ok = nats
+        .jetstream_publish(&subject, &event)
+        .await
+        .map_err(|e| format!("jetstream_publish {}: {}", subject, e))?;
+    if !ok {
+        return Err(format!(
+            "jetstream_publish {} dropped (timeout/backpressure)",
+            subject
+        ));
+    }
+    Ok(())
 }
 
 /// Wartet gebunden auf /status (HTTP 200). Bei Timeout: diagnostische Infos.
