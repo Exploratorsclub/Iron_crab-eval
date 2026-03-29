@@ -10,7 +10,8 @@
 //! **A.43 / SELL-E2E:** `start_execution_engine_with_eval_wallet` schreibt ein deterministisches
 //! Fixture-Keypair und setzt `IRONCRAB_KEYPAIR_PATH` (öffentlicher Binär-Vertrag + ROLE_SEPARATION).
 //! `seed_wallet_balance_snapshot_jetstream` publiziert `MarketEventKind::WalletBalanceSnapshot` per
-//! `NatsClient::jetstream_publish` auf `wallet_snapshot_subject` (JetStream-SSOT, vgl. Topic-Rustdoc).
+//! direktem `async_nats::jetstream::publish` inkl. **Pub-Ack-Await** auf `wallet_snapshot_subject`
+//! (JetStream-SSOT, vgl. Topic-Rustdoc).
 
 use std::fs;
 use std::io::Read;
@@ -19,9 +20,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use futures::StreamExt;
 use ironcrab::ipc::{MarketEvent, MarketEventKind};
-use ironcrab::nats::client::{NatsClient, NatsConfig};
 use ironcrab::nats::ensure_wallet_snapshot_stream;
 use ironcrab::nats::topics::wallet_snapshot_subject;
 use ironcrab::nats::WALLET_SNAPSHOT_STREAM_NAME;
@@ -553,6 +554,12 @@ fn stdio_excerpt_from_child_after_exit(child: &mut Child, name: &str) -> String 
 
 /// JetStream: `WalletBalanceSnapshot` auf `ironcrab.wallet_snapshot.{wallet}.{mint}` (öffentliche
 /// Topic-Helfer + `ensure_wallet_snapshot_stream`). Blackbox-Seed für LockManager-Token-Saldo.
+///
+/// **Wichtig:** `ironcrab::nats::NatsClient::jetstream_publish` liefert nur `Ok(true)`, wenn das
+/// *äußere* `jetstream.publish` zurückkehrt — das zurückgegebene [`PublishAckFuture`] wird dort
+/// **nicht** abgewartet. Ohne `.await` auf die Ack-Future persistiert die Nachricht u.U. nicht
+/// sichtbar für `get_last_raw_message_by_subject`. Diese Hilfsfunktion publiziert daher direkt
+/// über `async_nats::jetstream::Context::publish` und wartet die JetStream-**Pub-Ack** ab.
 #[allow(dead_code)]
 pub async fn seed_wallet_balance_snapshot_jetstream(
     nats_url: &str,
@@ -561,15 +568,11 @@ pub async fn seed_wallet_balance_snapshot_jetstream(
     balance_raw: u64,
     decimals: u8,
     token_program: &str,
-) -> Result<(), String> {
-    let mut nats = NatsClient::new(NatsConfig::new(
-        nats_url,
-        "ironcrab-eval-wallet-snapshot-seed",
-    ));
-    nats.connect()
+) -> Result<String, String> {
+    let client = async_nats::connect(nats_url)
         .await
         .map_err(|e| format!("nats connect (wallet snapshot seed): {}", e))?;
-    ensure_wallet_snapshot_stream(nats.client())
+    ensure_wallet_snapshot_stream(&client)
         .await
         .map_err(|e| format!("ensure_wallet_snapshot_stream: {}", e))?;
 
@@ -594,17 +597,51 @@ pub async fn seed_wallet_balance_snapshot_jetstream(
         },
     );
     let subject = wallet_snapshot_subject(wallet, mint);
-    let ok = nats
-        .jetstream_publish(&subject, &event)
+    let json = serde_json::to_vec(&event).map_err(|e| format!("serialize MarketEvent: {e}"))?;
+
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(WALLET_SNAPSHOT_STREAM_NAME)
         .await
-        .map_err(|e| format!("jetstream_publish {}: {}", subject, e))?;
-    if !ok {
-        return Err(format!(
-            "jetstream_publish {} dropped (timeout/backpressure)",
-            subject
-        ));
-    }
-    Ok(())
+        .map_err(|e| format!("get_stream {}: {}", WALLET_SNAPSHOT_STREAM_NAME, e))?;
+    let state_before = stream
+        .get_info()
+        .await
+        .map_err(|e| format!("stream info before publish: {e}"))?;
+
+    let publish_fut = jetstream
+        .publish(subject.clone(), Bytes::from(json))
+        .await
+        .map_err(|e| {
+            format!("jetstream.publish (kein Stream fuer Subject?): subject={subject} err={e}")
+        })?;
+    let ack = publish_fut
+        .await
+        .map_err(|e| format!("JetStream publish ack fehlgeschlagen: subject={subject} err={e}"))?;
+
+    let state_after = stream
+        .get_info()
+        .await
+        .map_err(|e| format!("stream info after publish: {e}"))?;
+
+    Ok(format!(
+        "WalletBalanceSnapshot seed (JetStream Pub-Ack abgewartet)\n\
+         subject={}\n\
+         publish_ack: stream={} seq={} duplicate={} domain={}\n\
+         stream_state_vorher: messages={} bytes={} last_seq={}\n\
+         stream_state_nachher: messages={} bytes={} last_seq={}\n",
+        subject,
+        ack.stream,
+        ack.sequence,
+        ack.duplicate,
+        ack.domain,
+        state_before.state.messages,
+        state_before.state.bytes,
+        state_before.state.last_sequence,
+        state_after.state.messages,
+        state_after.state.bytes,
+        state_after.state.last_sequence,
+    ))
 }
 
 /// Blackbox-Nachweis: letzte JetStream-Nachricht für `wallet_snapshot_subject(wallet, mint)` im

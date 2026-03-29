@@ -492,7 +492,7 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
 
     let balance_raw: u64 = 10_000_000;
     let rt_setup = tokio::runtime::Runtime::new().expect("runtime");
-    rt_setup
+    let seed_publish_evidence = rt_setup
         .block_on(seed_wallet_balance_snapshot_jetstream(
             harness.nats_url(),
             &wallet_pubkey,
@@ -521,8 +521,8 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
             harness.stop();
             let diag = harness.capture_eval_e2e_diagnostics();
             panic!(
-                "JetStream Wallet-Snapshot nicht rechtzeitig sichtbar (EE nicht gestartet).\n{}\nJetStream-Probe: {:?}\n\n{}",
-                e, probe, diag
+                "JetStream Wallet-Snapshot nicht rechtzeitig sichtbar (EE nicht gestartet).\n{}\n--- Seed publish (Pub-Ack) ---\n{}\nJetStream-Probe: {:?}\n\n{}",
+                e, seed_publish_evidence, probe, diag
             );
         });
 
@@ -580,8 +580,9 @@ fn request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip() {
 
     if let Err(e) = result {
         panic!(
-            "A.43 E2E fehlgeschlagen (siehe Wire-Zusammenfassung unten).\n\n{}\n\n--- JetStream seed (vor EE-Start, read-after-write) ---\n{}\n--- JetStream-Probe Ende des Tests (letzte Msg auf Subject) ---\n{:?}\n\n--- Harness-Prozess-Logs / stdout/stderr / log-dir ---\n{}",
+            "A.43 E2E fehlgeschlagen (siehe Wire-Zusammenfassung unten).\n\n{}\n\n--- JetStream seed publish (Pub-Ack, vor read-after-write) ---\n{}\n--- JetStream read-after-write (vor EE-Start) ---\n{}\n--- JetStream-Probe Ende des Tests (letzte Msg auf Subject) ---\n{:?}\n\n--- Harness-Prozess-Logs / stdout/stderr / log-dir ---\n{}",
             e,
+            seed_publish_evidence,
             js_wait_evidence,
             js_probe_on_wire_failure,
             diag
