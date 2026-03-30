@@ -6,15 +6,29 @@
 //!
 //! Kein Lesen von Iron_crab/src/ oder Iron_crab/tests/.
 //! Keine Assertions auf Implementierungsdetails.
+//!
+//! **A.43 / SELL-E2E:** `start_execution_engine_with_eval_wallet` schreibt ein deterministisches
+//! Fixture-Keypair und setzt `IRONCRAB_KEYPAIR_PATH` (öffentlicher Binär-Vertrag + ROLE_SEPARATION).
+//! `seed_wallet_balance_snapshot_jetstream` publiziert `MarketEventKind::WalletBalanceSnapshot` per
+//! direktem `async_nats::jetstream::publish` inkl. **Pub-Ack-Await** auf `wallet_snapshot_subject`
+//! (JetStream-SSOT, vgl. Topic-Rustdoc).
 
 use std::fs;
 use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use futures::StreamExt;
+use ironcrab::ipc::{MarketEvent, MarketEventKind};
+use ironcrab::nats::ensure_wallet_snapshot_stream;
+use ironcrab::nats::topics::wallet_snapshot_subject;
+use ironcrab::nats::WALLET_SNAPSHOT_STREAM_NAME;
+use solana_sdk::signer::keypair::Keypair;
+use solana_sdk::signer::EncodableKey;
+use solana_sdk::signer::Signer;
 
 /// Pfad zu Iron_crab (Geschwister-Ordner). Wie golden_replay_blackbox.rs.
 fn iron_crab_root() -> PathBuf {
@@ -52,6 +66,17 @@ const STATUS_POLL_TIMEOUT_SECS: u64 = 60;
 /// Intervall zwischen /status-Polls (Millisekunden).
 const STATUS_POLL_INTERVAL_MS: u64 = 300;
 
+/// Eval-Diagnose: Zeichen pro Log-Datei-Ende / Pipe-Auszug.
+const E2E_DIAG_TAIL_CHARS: usize = 4000;
+/// Max. Dateien pro Log-Baum (Determinismus).
+const E2E_DIAG_MAX_FILES_PER_TREE: usize = 12;
+
+/// Bounded wait: JetStream muss die geseedete Nachricht lesbar haben, **bevor** execution-engine
+/// startet — sonst kann `LastPerSubject`-Bootstrap eine leere erste Fetch-Runde sehen und
+/// `balance_raw=0` im LockManager bleiben (SIM_INSUFFICIENT_BALANCE).
+const WALLET_SNAPSHOT_JS_VISIBLE_TIMEOUT_SECS: u64 = 10;
+const WALLET_SNAPSHOT_JS_VISIBLE_POLL_MS: u64 = 100;
+
 /// Sucht das vorab gebaute Binary (reduziert Startlatenz vs. cargo run).
 fn find_binary(name: &str) -> Option<PathBuf> {
     let path = iron_crab_root().join("target").join("debug").join(name);
@@ -83,6 +108,10 @@ pub struct RequestReplyE2eHarness {
     nats_child: Option<Child>,
     market_data_child: Option<Child>,
     execution_engine_child: Option<Child>,
+    /// Stdout-/Stderr-Auszüge nach `stop()` (lebende Pipes werden nicht gelesen — verhindert Deadlocks).
+    nats_stdio_excerpt: Option<String>,
+    market_data_stdio_excerpt: Option<String>,
+    execution_engine_stdio_excerpt: Option<String>,
 }
 
 impl RequestReplyE2eHarness {
@@ -111,6 +140,9 @@ impl RequestReplyE2eHarness {
             nats_child: None,
             market_data_child: None,
             execution_engine_child: None,
+            nats_stdio_excerpt: None,
+            market_data_stdio_excerpt: None,
+            execution_engine_stdio_excerpt: None,
         })
     }
 
@@ -248,17 +280,107 @@ impl RequestReplyE2eHarness {
         Ok(())
     }
 
-    /// Stoppt alle Kindprozesse.
+    /// Schreibt ein deterministisches Eval-Treasury-Keypair (kein Mainnet-Wert) und gibt Pfad +
+    /// Wallet-Pubkey (base58) zurück. Für SELL-E2E vor `start_execution_engine_with_eval_wallet`.
+    #[allow(dead_code)] // genutzt von `request_reply_e2e_contract`; Harness wird in mehreren Test-Binaries gelinkt
+    pub fn write_eval_treasury_keypair(&self) -> Result<(PathBuf, String), String> {
+        let kp_path = self._temp_dir.path().join("eval_e2e_treasury.json");
+        // Festes Fixture-Secret (nur Eval); niemals fuer echte Gelder verwenden.
+        let kp = Keypair::new_from_array([42u8; 32]);
+        kp.write_to_file(&kp_path)
+            .map_err(|e| format!("write fixture keypair {}: {}", kp_path.display(), e))?;
+        let wallet = kp.pubkey().to_string();
+        Ok((kp_path, wallet))
+    }
+
+    /// Wie `start_execution_engine`, aber mit `IRONCRAB_KEYPAIR_PATH` auf die Fixture-Datei
+    /// (Wallet-Pubkey verfügbar, weiterhin `--dry-run`).
+    #[allow(dead_code)]
+    pub fn start_execution_engine_with_eval_wallet(
+        &mut self,
+        keypair_path: &Path,
+    ) -> Result<(), String> {
+        let log_dir = self._temp_dir.path().join("execution_engine_log");
+        fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir: {}", e))?;
+
+        let kp = keypair_path
+            .to_str()
+            .ok_or_else(|| "keypair path not utf-8".to_string())?;
+
+        let args = [
+            "--nats-url",
+            &self.nats_url,
+            "--dry-run",
+            "--metrics-port",
+            &self.execution_engine_metrics_port.to_string(),
+            "--log-dir",
+            log_dir.to_str().unwrap(),
+        ];
+
+        let child = if let Some(bin) = find_binary("execution-engine") {
+            Command::new(bin)
+                .env("IRONCRAB_KEYPAIR_PATH", kp)
+                .args(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        } else {
+            let manifest = iron_crab_root().join("Cargo.toml");
+            if !manifest.exists() {
+                return Err(format!("Iron_crab nicht gefunden: {:?}", iron_crab_root()));
+            }
+            Command::new("cargo")
+                .env("IRONCRAB_KEYPAIR_PATH", kp)
+                .args([
+                    "run",
+                    "--manifest-path",
+                    manifest.to_str().unwrap(),
+                    "--bin",
+                    "execution-engine",
+                    "--",
+                ])
+                .args(args)
+                .current_dir(iron_crab_root().parent().unwrap())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+        }
+        .map_err(|e| format!("execution-engine spawn: {}", e))?;
+
+        self.execution_engine_child = Some(child);
+        wait_for_component_status(
+            self.execution_engine_metrics_port,
+            "execution-engine",
+            &mut self.execution_engine_child,
+        )?;
+        Ok(())
+    }
+
+    /// Stoppt alle Kindprozesse, wartet auf Exit und **liest danach** stdout/stderr bis EOF
+    /// (sicher — keine Blockade auf lebenden Pipes).
     pub fn stop(&mut self) {
-        let kill = |child: &mut Option<Child>, _name: &str| {
+        let stop_one = |child: &mut Option<Child>, cache: &mut Option<String>, name: &str| {
             if let Some(mut c) = child.take() {
                 let _ = c.kill();
                 let _ = c.wait();
+                *cache = Some(stdio_excerpt_from_child_after_exit(&mut c, name));
             }
         };
-        kill(&mut self.execution_engine_child, "execution-engine");
-        kill(&mut self.market_data_child, "market-data");
-        kill(&mut self.nats_child, "nats");
+        stop_one(
+            &mut self.execution_engine_child,
+            &mut self.execution_engine_stdio_excerpt,
+            "execution-engine",
+        );
+        stop_one(
+            &mut self.market_data_child,
+            &mut self.market_data_stdio_excerpt,
+            "market-data",
+        );
+        stop_one(
+            &mut self.nats_child,
+            &mut self.nats_stdio_excerpt,
+            "nats-server",
+        );
     }
 
     /// Prüft ob die Prozesse noch laufen.
@@ -292,6 +414,322 @@ impl RequestReplyE2eHarness {
     pub fn temp_dir_path(&self) -> &Path {
         self._temp_dir.path()
     }
+
+    /// Blackbox-Diagnose nach `stop()`: verwendet die bei `stop()` erfassten stdout/stderr-Auszüge
+    /// (kein Lesen lebendiger Pipes — verhindert CI-Deadlocks bei `read_to_end`).
+    /// Liest zusätzlich Auszüge aus `market_data_log` / `execution_engine_log`.
+    /// Nur für Eval-Timeouts — kein Impl-Code.
+    #[allow(dead_code)]
+    pub fn capture_eval_e2e_diagnostics(&mut self) -> String {
+        let mut blocks = Vec::new();
+
+        let ee = self.execution_engine_stdio_excerpt.as_deref().unwrap_or(
+            "(stdout/stderr: noch nicht erfasst — vorher harness.stop() aufrufen; lebendige Pipes werden nicht gelesen)",
+        );
+        blocks.push(format!(
+            "--- execution-engine (stdout/stderr, nach stop) ---\n{ee}"
+        ));
+
+        let md = self.market_data_stdio_excerpt.as_deref().unwrap_or(
+            "(stdout/stderr: noch nicht erfasst — vorher harness.stop() aufrufen; lebendige Pipes werden nicht gelesen)",
+        );
+        blocks.push(format!(
+            "--- market-data (stdout/stderr, nach stop) ---\n{md}"
+        ));
+
+        let nats = self.nats_stdio_excerpt.as_deref().unwrap_or(
+            "(stdout/stderr: noch nicht erfasst — vorher harness.stop() aufrufen; lebendige Pipes werden nicht gelesen)",
+        );
+        blocks.push(format!(
+            "--- nats-server (stdout/stderr, nach stop) ---\n{nats}"
+        ));
+
+        let md_log = self._temp_dir.path().join("market_data_log");
+        let ee_log = self._temp_dir.path().join("execution_engine_log");
+        blocks.push(format!(
+            "--- market_data_log (Dateien) ---\n{}",
+            log_dir_tree_excerpts(&md_log, "market_data_log")
+        ));
+        blocks.push(format!(
+            "--- execution_engine_log (Dateien) ---\n{}",
+            log_dir_tree_excerpts(&ee_log, "execution_engine_log")
+        ));
+
+        blocks.join("\n\n")
+    }
+}
+
+fn tail_string_chars(s: &str, max_chars: usize) -> String {
+    let v: Vec<char> = s.chars().collect();
+    if v.len() <= max_chars {
+        return s.to_string();
+    }
+    v[v.len().saturating_sub(max_chars)..].iter().collect()
+}
+
+fn read_file_tail_utf8(path: &Path, max_chars: usize) -> String {
+    let Ok(bytes) = fs::read(path) else {
+        return format!("(read error: {})", path.display());
+    };
+    let s = String::from_utf8_lossy(&bytes);
+    tail_string_chars(&s, max_chars)
+}
+
+fn log_dir_tree_excerpts(root: &Path, label: &str) -> String {
+    if !root.exists() {
+        return format!("({label}: Verzeichnis fehlt: {})", root.display());
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_files_recursive(root, &mut files, E2E_DIAG_MAX_FILES_PER_TREE * 4);
+    files.sort();
+    files.truncate(E2E_DIAG_MAX_FILES_PER_TREE);
+    if files.is_empty() {
+        return format!("({label}: keine Dateien unter {})", root.display());
+    }
+    let mut out = String::new();
+    for p in files {
+        let excerpt = read_file_tail_utf8(&p, E2E_DIAG_TAIL_CHARS);
+        out.push_str(&format!(
+            "\n>> {} (letzte ~{} Zeichen)\n{}\n",
+            p.display(),
+            E2E_DIAG_TAIL_CHARS,
+            excerpt
+        ));
+    }
+    out
+}
+
+fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>, cap: usize) {
+    if out.len() >= cap {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(dir) else {
+        return;
+    };
+    for ent in rd.flatten() {
+        if out.len() >= cap {
+            break;
+        }
+        let p = ent.path();
+        let meta = ent.metadata().ok();
+        if meta.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
+            collect_files_recursive(&p, out, cap);
+        } else if meta.as_ref().map(|m| m.is_file()).unwrap_or(false) {
+            out.push(p);
+        }
+    }
+}
+
+/// Nur nach `kill`+`wait` aufrufen: liest Pipes bis EOF (blockiert nicht endlos).
+fn stdio_excerpt_from_child_after_exit(child: &mut Child, name: &str) -> String {
+    let mut parts = Vec::new();
+    if let Ok(Some(st)) = child.try_wait() {
+        parts.push(format!("exit={st:?}"));
+    } else {
+        parts.push("exit=unbekannt".to_string());
+    }
+    if let Some(mut p) = child.stdout.take() {
+        let s = read_pipe_excerpt(&mut p);
+        if !s.trim().is_empty() {
+            parts.push(format!(
+                "stdout tail:\n{}",
+                tail_string_chars(&s, E2E_DIAG_TAIL_CHARS)
+            ));
+        }
+    }
+    if let Some(mut p) = child.stderr.take() {
+        let s = read_pipe_excerpt(&mut p);
+        if !s.trim().is_empty() {
+            parts.push(format!(
+                "stderr tail:\n{}",
+                tail_string_chars(&s, E2E_DIAG_TAIL_CHARS)
+            ));
+        }
+    }
+    if parts.len() == 1 {
+        parts.push(format!("({name}: keine stdout/stderr-Daten gelesen)"));
+    }
+    parts.join("\n")
+}
+
+/// JetStream: `WalletBalanceSnapshot` auf `ironcrab.wallet_snapshot.{wallet}.{mint}` (öffentliche
+/// Topic-Helfer + `ensure_wallet_snapshot_stream`). Blackbox-Seed für LockManager-Token-Saldo.
+///
+/// **Wichtig:** `ironcrab::nats::NatsClient::jetstream_publish` liefert nur `Ok(true)`, wenn das
+/// *äußere* `jetstream.publish` zurückkehrt — das zurückgegebene [`PublishAckFuture`] wird dort
+/// **nicht** abgewartet. Ohne `.await` auf die Ack-Future persistiert die Nachricht u.U. nicht
+/// sichtbar für `get_last_raw_message_by_subject`. Diese Hilfsfunktion publiziert daher direkt
+/// über `async_nats::jetstream::Context::publish` und wartet die JetStream-**Pub-Ack** ab.
+#[allow(dead_code)]
+pub async fn seed_wallet_balance_snapshot_jetstream(
+    nats_url: &str,
+    wallet: &str,
+    mint: &str,
+    balance_raw: u64,
+    decimals: u8,
+    token_program: &str,
+) -> Result<String, String> {
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (wallet snapshot seed): {}", e))?;
+    ensure_wallet_snapshot_stream(&client)
+        .await
+        .map_err(|e| format!("ensure_wallet_snapshot_stream: {}", e))?;
+
+    let event = MarketEvent::new(
+        "ironcrab-eval",
+        "e2e-harness",
+        "wallet-seed",
+        format!(
+            "evt-wsnap-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ),
+        "eval-harness",
+        Some(1),
+        MarketEventKind::WalletBalanceSnapshot {
+            mint: mint.to_string(),
+            balance_raw,
+            decimals,
+            token_program: token_program.to_string(),
+        },
+    );
+    let subject = wallet_snapshot_subject(wallet, mint);
+    let json = serde_json::to_vec(&event).map_err(|e| format!("serialize MarketEvent: {e}"))?;
+
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(WALLET_SNAPSHOT_STREAM_NAME)
+        .await
+        .map_err(|e| format!("get_stream {}: {}", WALLET_SNAPSHOT_STREAM_NAME, e))?;
+    let state_before = stream
+        .get_info()
+        .await
+        .map_err(|e| format!("stream info before publish: {e}"))?;
+
+    let publish_fut = jetstream
+        .publish(subject.clone(), Bytes::from(json))
+        .await
+        .map_err(|e| {
+            format!("jetstream.publish (kein Stream fuer Subject?): subject={subject} err={e}")
+        })?;
+    let ack = publish_fut
+        .await
+        .map_err(|e| format!("JetStream publish ack fehlgeschlagen: subject={subject} err={e}"))?;
+
+    let state_after = stream
+        .get_info()
+        .await
+        .map_err(|e| format!("stream info after publish: {e}"))?;
+
+    Ok(format!(
+        "WalletBalanceSnapshot seed (JetStream Pub-Ack abgewartet)\n\
+         subject={}\n\
+         publish_ack: stream={} seq={} duplicate={} domain={}\n\
+         stream_state_vorher: messages={} bytes={} last_seq={}\n\
+         stream_state_nachher: messages={} bytes={} last_seq={}\n",
+        subject,
+        ack.stream,
+        ack.sequence,
+        ack.duplicate,
+        ack.domain,
+        state_before.state.messages,
+        state_before.state.bytes,
+        state_before.state.last_sequence,
+        state_after.state.messages,
+        state_after.state.bytes,
+        state_after.state.last_sequence,
+    ))
+}
+
+/// Blackbox-Nachweis: letzte JetStream-Nachricht für `wallet_snapshot_subject(wallet, mint)` im
+/// Stream `WALLET_SNAPSHOT` (ohne Impl in `Iron_crab/src/` zu lesen — nur öffentlicher Stream-Name
+/// + Subject-Helfer).
+#[allow(dead_code)]
+pub async fn probe_wallet_snapshot_jetstream_delivery(
+    nats_url: &str,
+    wallet: &str,
+    mint: &str,
+) -> Result<String, String> {
+    let subject = wallet_snapshot_subject(wallet, mint);
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (jetstream probe): {}", e))?;
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(WALLET_SNAPSHOT_STREAM_NAME)
+        .await
+        .map_err(|e| format!("get_stream {}: {}", WALLET_SNAPSHOT_STREAM_NAME, e))?;
+    let msg = stream
+        .get_last_raw_message_by_subject(&subject)
+        .await
+        .map_err(|e| format!("get_last_raw_message_by_subject {subject}: {e}"))?;
+    let payload = String::from_utf8_lossy(msg.payload.as_ref());
+    let tail = tail_string_chars(&payload, 600);
+    Ok(format!(
+        "stream={} subject={} payload_utf8_tail={tail}",
+        WALLET_SNAPSHOT_STREAM_NAME, subject
+    ))
+}
+
+/// Wartet bis die geseedete `WalletBalanceSnapshot`-Nachricht im JetStream-Stream materialisiert ist
+/// und `balance_raw` dem Erwartungswert entspricht (Read-after-Write vor EE-Start).
+#[allow(dead_code)]
+pub async fn wait_until_wallet_snapshot_visible_in_jetstream(
+    nats_url: &str,
+    wallet: &str,
+    mint: &str,
+    expected_balance_raw: u64,
+) -> Result<String, String> {
+    let subject = wallet_snapshot_subject(wallet, mint);
+    let deadline = Instant::now() + Duration::from_secs(WALLET_SNAPSHOT_JS_VISIBLE_TIMEOUT_SECS);
+    let mut last = String::new();
+
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (wait js snapshot): {}", e))?;
+    let jetstream = async_nats::jetstream::new(client);
+
+    while Instant::now() < deadline {
+        match jetstream.get_stream(WALLET_SNAPSHOT_STREAM_NAME).await {
+            Ok(stream) => match stream.get_last_raw_message_by_subject(&subject).await {
+                Ok(msg) => match serde_json::from_slice::<MarketEvent>(msg.payload.as_ref()) {
+                    Ok(event) => {
+                        if let MarketEventKind::WalletBalanceSnapshot { balance_raw, .. } =
+                            &event.kind
+                        {
+                            if *balance_raw == expected_balance_raw {
+                                return Ok(format!(
+                                    "JetStream read-after-write OK: stream={} subject={} balance_raw={}",
+                                    WALLET_SNAPSHOT_STREAM_NAME, subject, balance_raw
+                                ));
+                            }
+                            last = format!(
+                                "subject={subject} balance_raw={balance_raw} (erwartet {expected_balance_raw})"
+                            );
+                        } else {
+                            last =
+                                format!("subject={subject} kind ist nicht WalletBalanceSnapshot");
+                        }
+                    }
+                    Err(e) => last = format!("deserialize MarketEvent: {e}"),
+                },
+                Err(e) => last = format!("get_last_raw_message_by_subject {subject}: {e}"),
+            },
+            Err(e) => last = format!("get_stream {}: {}", WALLET_SNAPSHOT_STREAM_NAME, e),
+        }
+        tokio::time::sleep(Duration::from_millis(WALLET_SNAPSHOT_JS_VISIBLE_POLL_MS)).await;
+    }
+
+    Err(format!(
+        "Wallet-Snapshot nach {}s nicht im JetStream-Stream {} fuer subject {} lesbar oder balance mismatch. Letzter Stand: {}",
+        WALLET_SNAPSHOT_JS_VISIBLE_TIMEOUT_SECS,
+        WALLET_SNAPSHOT_STREAM_NAME,
+        subject,
+        last
+    ))
 }
 
 /// Wartet gebunden auf /status (HTTP 200). Bei Timeout: diagnostische Infos.
