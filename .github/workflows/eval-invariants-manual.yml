@@ -1,0 +1,59 @@
+# Vollständige ironcrab-eval Test-Suite (Invarianten / Blackbox).
+# Nur manuell auslösen, wenn Impl- und Eval-Stand zur API passen (z. B. nach koordiniertem Merge).
+# Reguläre Qualität auf PRs: Workflow „Rust“ (.github/workflows/rust.yml).
+name: Eval invariant tests (manual)
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  eval-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ironcrab-eval
+        uses: actions/checkout@v4
+        with:
+          path: ironcrab-eval
+
+      - name: Checkout Iron_crab
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Iron_crab
+          path: Iron_crab
+
+      - name: Patch git-dep to use sibling checkout
+        run: |
+          cat >> ironcrab-eval/Cargo.toml <<'EOF'
+
+          [patch."https://github.com/Exploratorsclub/Iron_crab.git"]
+          ironcrab = { path = "../Iron_crab" }
+          EOF
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Clippy (inkl. Test-Ziele)
+        run: cargo clippy -p ironcrab-eval --all-targets -- -D warnings
+        working-directory: ironcrab-eval
+
+      - name: Build execution-engine (Golden-Replay / DoD)
+        run: cargo build --manifest-path ../Iron_crab/Cargo.toml --bin execution-engine
+        working-directory: ironcrab-eval
+
+      - name: Build market-data (Request-Reply-E2E)
+        run: cargo build --manifest-path ../Iron_crab/Cargo.toml --bin market-data
+        working-directory: ironcrab-eval
+
+      - name: Install nats-server
+        run: |
+          NATS_VER="v2.10.16"
+          curl -sL "https://github.com/nats-io/nats-server/releases/download/${NATS_VER}/nats-server-${NATS_VER}-linux-amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/nats-server-${NATS_VER}-linux-amd64/nats-server /usr/local/bin/
+          nats-server -v
+
+      - name: Run tests
+        run: cargo test --verbose
+        working-directory: ironcrab-eval

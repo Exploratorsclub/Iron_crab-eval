@@ -24,6 +24,12 @@ Trading_bot/
 
 `Cargo.toml` nutzt `path = ".."` (Parent = Iron_crab bei CI: Iron_crab/ironcrab-eval/). Lokal: Iron_crab-eval als Sibling, dann `path = "../Iron_crab"` setzen.
 
+## CI
+
+- **Rust** (PR/`main`): `cargo fmt`, `cargo check`, `cargo build`, `cargo clippy` ohne Test-Ziele — vermeidet Deadlocks, wenn Eval-Tests eine neuere `ironcrab`-API erwarten als der gerade gepatchte `Iron_crab`-Checkout.
+- **Eval invariant tests (manual):** Workflow `eval-invariants-manual.yml` — volle Suite inkl. `cargo clippy --all-targets` und `cargo test` (manuell in GitHub Actions starten, wenn Impl- und Eval-Stand zusammenpassen).
+- Die **Invarianten gegen den kanonischen Impl-Stand** laufen in **Iron_crab** (Eval Level 5).
+
 ## Tests ausführen
 
 ```bash
