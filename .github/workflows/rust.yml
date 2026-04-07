@@ -1,3 +1,8 @@
+# PR-/Main-Gate für ironcrab-eval: schnelle, API-unabhängige Qualitätschecks.
+# Die eigentlichen Invarianten-/Blackbox-Tests laufen in Iron_crab CI (Eval Level 5)
+# gegen den jeweiligen Impl-Stand; hier nur fmt + check + build + clippy ohne Test-Ziele,
+# damit Eval-PRs (z. B. Test-Anpassungen) nicht gegen einen festen architecture-rebuild
+# blockieren.
 name: Rust
 
 on:
@@ -49,25 +54,8 @@ jobs:
         run: cargo build --verbose
         working-directory: ironcrab-eval
 
+      # Kein --all-targets: sonst werden Integrationstests (tests/*.rs) kompiliert und
+      # an die öffentliche ironcrab-API gekoppelt (Workflow-Deadlock mit parallelen Impl/Eval-PRs).
       - name: Clippy
-        run: cargo clippy -p ironcrab-eval --all-targets -- -D warnings
-        working-directory: ironcrab-eval
-
-      - name: Build execution-engine (für Golden-Replay-Tests, DoD G.P1)
-        run: cargo build --manifest-path ../Iron_crab/Cargo.toml --bin execution-engine
-        working-directory: ironcrab-eval
-
-      - name: Build market-data (für Request-Reply-E2E-Harness, I-24c/I-24d)
-        run: cargo build --manifest-path ../Iron_crab/Cargo.toml --bin market-data
-        working-directory: ironcrab-eval
-
-      - name: Install nats-server (für Request-Reply-E2E-Harness)
-        run: |
-          NATS_VER="v2.10.16"
-          curl -sL "https://github.com/nats-io/nats-server/releases/download/${NATS_VER}/nats-server-${NATS_VER}-linux-amd64.tar.gz" | tar xz -C /tmp
-          sudo mv /tmp/nats-server-${NATS_VER}-linux-amd64/nats-server /usr/local/bin/
-          nats-server -v
-
-      - name: Run tests
-        run: cargo test --verbose
+        run: cargo clippy -p ironcrab-eval -- -D warnings
         working-directory: ironcrab-eval

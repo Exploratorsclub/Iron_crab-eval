@@ -237,6 +237,8 @@ fn contract_pump_amm_build_ix_valid_accounts() {
         user,
         &pool_accounts,
         None,
+        false,
+        None,
     );
 
     assert!(result.is_ok());
@@ -272,6 +274,8 @@ fn contract_pump_amm_build_ix_preserves_observed_protocol_fee_metas() {
         100_000,
         user,
         &pool_accounts,
+        None,
+        false,
         None,
     );
 
@@ -312,6 +316,8 @@ fn contract_pump_amm_build_ix_derives_fee_ta_from_observed_recipient_when_ta_mis
         user,
         &pool_accounts,
         None,
+        false,
+        None,
     );
 
     assert!(result.is_ok(), "expected Ok: {:?}", result);
@@ -347,6 +353,8 @@ fn contract_pump_amm_build_ix_errors_when_protocol_fee_pubkeys_missing() {
         user,
         &pool_accounts,
         None,
+        false,
+        None,
     );
 
     let err = result.expect_err("expected Err when protocol_fee_recipient and fee TA are default");
@@ -358,5 +366,51 @@ fn contract_pump_amm_build_ix_errors_when_protocol_fee_pubkeys_missing() {
     assert!(
         msg.contains("missing") || msg.contains("observed fee"),
         "error should indicate missing/unobserved fee accounts, not a generic build failure; got: {msg}"
+    );
+}
+
+#[test]
+fn contract_pump_amm_build_ix_sell_cashback_remaining_adds_24th_meta() {
+    let wsol = Pubkey::from_str(WSOL_MINT).unwrap();
+    let base_mint = Pubkey::new_unique();
+    let base_mint_str = base_mint.to_string();
+    let user = Pubkey::new_unique();
+    let protocol_fee_recipient = Pubkey::new_unique();
+    let protocol_fee_recipient_ta = Pubkey::new_unique();
+    let cashback_third_meta = Pubkey::new_unique();
+
+    let pool_accounts = pool_accounts_v1_pumpswap_layout(
+        base_mint,
+        wsol,
+        protocol_fee_recipient,
+        protocol_fee_recipient_ta,
+    );
+
+    let result = PumpFunAmmDex::build_swap_ix_from_pool_accounts(
+        &base_mint_str,
+        WSOL_MINT,
+        1_000_000_000,
+        100_000,
+        user,
+        &pool_accounts,
+        None,
+        true,
+        Some(cashback_third_meta),
+    );
+
+    assert!(result.is_ok(), "expected Ok: {:?}", result);
+    let ixs = result.unwrap();
+    assert_eq!(ixs.len(), 1, "expected exactly one swap instruction");
+
+    let swap_ix = pump_swap_swap_ix(&ixs);
+    assert_eq!(
+        swap_ix.accounts.len(),
+        24,
+        "SELL with cashback remaining must expose the 24-account PumpSwap layout"
+    );
+    assert_eq!(
+        swap_ix.accounts.last().unwrap().pubkey,
+        cashback_third_meta,
+        "the final account meta must match the provided cashback third meta"
     );
 }
