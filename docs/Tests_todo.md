@@ -130,24 +130,24 @@ Für jeden neuen Eval-Test:
 - Die aktuelle Architektur trennt Hot Path vs. Cold Path korrekt auf dem Papier, aber die Recovery-Semantik ist bisher nur teilweise und DEX-spezifisch umgesetzt.
 - Das Ziel ist eine schrittweise DEX-Ausweitung in kleinen Scopes, nicht ein grosser Refactor.
 
-**Impl-/Eval-Status (2026-03-24):**
+**Impl-/Eval-Status (2026-03-30):**
 - Cold-Path-Recovery mit `force_refresh=true` und bounded Wait/Retry ist im Impl-Repo gemergt.
+- Die Impl-Control-Plane deckt jetzt alle aktuell implementierten DEX-Pfade ab: PumpSwap, PumpFun Bonding Curve, Orca Whirlpool, Meteora DLMM, Raydium AMM, Raydium CPMM und Meteora CPMM.
 - Hot-Path fuer regulaere `momentum-bot` PumpSwap-SELLs triggert nach strukturellem Sim-Fail einen nicht-blockierenden async Refresh an `market-data`, ohne Retry im selben Intent.
 - Wiederholte Hot-Path-Refreshes werden lokal per Mint gededupliziert; der Cooldown startet erst nach erfolgreichem `nats.publish -> Ok(true)`.
 - Der Healing-Pfad ist zusaetzlich ueber Runtime-Metriken beobachtbar (Trigger, suppressed, publish ok/fail, no-NATS).
-- Der Eval-Vertrag ist gemergt; Bugbot-Findings zu duplizierten Tests und unnoetiger Ein-Datei-Helper-Abstraktion wurden vor Merge bereinigt.
+- Der PumpSwap-Eval-Vertrag ist gemergt; dazu gehoert jetzt auch der schmale A.43-E2E-Wire-Slice fuer manuellen `sell_all` mit `pool_address_hint` (`request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip`).
 - PumpSwap ist damit der erste vollstaendige Slice.
 - PumpFun Bonding Curve Cold-Path-Recovery ist im Impl-Repo jetzt ebenfalls gemergt.
-- Naechster direkter Schritt ist dafuer ein enger Eval-Vertrag fuer force-refresh / autoritativen `market-data`-Refresh / bounded one-retry im Cold Path.
+- Der enge PumpFun-Bonding-Curve-Eval-Vertrag fuer force-refresh / autoritativen `market-data`-Refresh / bounded one-retry im Cold Path ist ebenfalls gemergt (A.44).
+- Fuer Raydium CPMM und Meteora CPMM gibt es aktuell noch keinen entsprechenden Eval-/On-Wire-Vertrag; das ist der verbleibende Verifikations-Gap innerhalb dieses ansonsten abgeschlossenen Request/Reply-Rollouts.
 
 **Empfohlene Test-Richtung:**
 - Pro DEX-Slice einen engen Blackbox-Vertrag formulieren statt einen grossen All-at-once-Test.
 - Fuer PumpSwap ist dieser Slice bereits erledigt.
-- Als naechstes fuer PumpFun Bonding Curve:
-  - stale-state / struktureller Sim-Fail im Cold Path
-  - autoritativer Refresh ueber `market-data`
-  - kein cache-first-Wiederverwenden desselben fehlerhaften States
-  - genau ein bounded Retry nach dem Refresh
+- Fuer PumpFun Bonding Curve ist dieser Slice ebenfalls erledigt.
+- Falls noch Verifikationsparitaet fuer alle DEX-Connectoren gewuenscht ist, sind Raydium-CPMM- und Meteora-CPMM-Eval-Slices die naechsten kleinen, klar umrissenen Tests.
+- Ansonsten sollten neue Scopes nur noch aus neuer Runtime-Evidenz oder aus einer noch ungetesteten DEX-spezifischen Recovery-Luecke geschnitten werden, nicht mehr aus diesem bereits weitgehend geschlossenen Rollout-Strang.
 
 ---
 

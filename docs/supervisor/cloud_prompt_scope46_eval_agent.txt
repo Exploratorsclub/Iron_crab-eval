@@ -1,0 +1,40 @@
+WICHTIG: Lies und befolge die STOP-CHECK Regeln in AGENTS.md und .cursor/rules/eval-test-authority.mdc BEVOR du eine Datei aenderst. Wenn eine geplante Aenderung gegen eine Regel verstoesst, STOPPE sofort und melde den Verstoss.
+
+## Invariante (A.3 DEX Connector, Volltext relevante Teile)
+
+Aus docs/spec/INVARIANTS.md — DEX Connector / PumpSwap:
+
+- **Build IX:** `build_swap_ix_from_pool_accounts` liefert nicht-leere Instructions mit korrektem program_id (PumpFunAmmDex)
+- **PumpSwap Build IX — Fee-Metas (pool_accounts v1):** Für `pool_accounts` der Länge 14 (Reihenfolge laut `PumpFunAmmDex::build_swap_ix_from_pool_accounts`-Doku) bezieht sich der Vertrag auf die **Account-Metas der erzeugten PumpSwap-Swap-Instruction an den dort dokumentierten Meta-Positionen** (öffentliche API-Doku: u. a. Meta **#9** `protocol_fee_recipient`, Meta **#10** `protocol_fee_recipient_ta`, bezogen auf die beobachteten Slots **`pool_accounts[6]`** / **`pool_accounts[7]`**). Nur Builder-/Connector-Vertrag:
+  - Sind `[6]` und `[7]` beobachtete (nicht-default) Pubkeys, muessen die entsprechenden Account-Metas in der Swap-IX an diesen dokumentierten Positionen genau diese Werte widerspiegeln.
+  - Ist `[6]` beobachtet, `[7]` aber default/leer, muss der Build erfolgreich sein und die Fee-ATA aus dem beobachteten Recipient ableiten.
+  - Sind beide `[6]` und `[7]` default/leer, muss der Build mit einem klaren Fehler scheitern.
+
+Erweiterung fuer diesen Task: Nach Impl Scope 46 (Cashback/Extended SELL) muss die oeffentliche API auch den **24-Account-SELL-Pfad** absicherbar sein, wenn der Caller `sell_requires_cashback_remaining: true` und ein gueltiges `sell_cashback_third_meta: Some(...)` setzt — ohne Impl-Code zu lesen (nur oeffentliche API / Instruction-Metas).
+
+## Zieldatei
+
+- `tests/invariants_dex_connector.rs` (Pflicht)
+- optional `docs/spec/INVARIANTS.md` (A.3 um Extended-SELL/Cashback-Bullet ergaenzen)
+
+## Aufgabe
+
+1. `PumpFunAmmDex::build_swap_ix_from_pool_accounts` hat nach `base_token_program` zwei neue Parameter:
+   - `sell_requires_cashback_remaining: bool`
+   - `sell_cashback_third_meta: Option<Pubkey>`
+
+2. Alle **vier** bestehenden Aufrufe in `invariants_dex_connector.rs` (Build-/Fee-Vertraege) um **`false, None`** ergaenzen, damit das klassische 21-Meta-SELL-Verhalten und die bestehenden Meta-Index-Assertions (9/10) erhalten bleiben.
+
+3. **Neuer Test:** SELL (Base -> WSOL) mit `sell_requires_cashback_remaining: true` und `sell_cashback_third_meta: Some(<eindeutiger nicht-default Pubkey>)`, selbes 14er pool_accounts v1 Fixture wie die Schwester-Tests. Erwartung: `Ok`, genau eine Swap-Instruction, **`accounts.len() == 24`**. Zusaetzlich: letztes Account-Meta pubkey == uebergebenes `third` (oeffentliche API-Vertrag). Keine Imports aus ironcrab Internals — nur oeffentliche Typen/Funktionen.
+
+## Koordination
+
+`ironcrab` kommt per git von Branch `architecture-rebuild`. Die neuen Parameter existieren erst nach Merge von Iron_crab PR #78 (Scope 46). Wenn dein Build noch die alte Signatur sieht: PR gegen main oeffnen; CI wird gruen sobald Impl gemerged ist. Lokal in der Agent-VM ggf. nachziehen.
+
+## Pruef-Befehle
+
+cargo fmt --check
+cargo clippy -p ironcrab-eval --all-targets -- -D warnings
+cargo test
+
+Branch-Vorschlag fuer den PR: cursor/scope46-eval-pumpswap-build-swap-ix
