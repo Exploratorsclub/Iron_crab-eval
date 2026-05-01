@@ -4,6 +4,8 @@
 
 **Quellen:** ARCHITECTURE_AUDIT.md (Iron_crab), EVAL_TEST_CANDIDATES.md, INVARIANTS.md
 
+**Hinweis (PumpFun IDL):** A.25 wurde auf die aktuelle PumpFun-IDL mit zusätzlichem Argument `track_volume: OptionBool` erweitert (Instruction-Daten 25 Byte; IronCrab-Hot-Path `track_volume=false`).
+
 ---
 
 ## 1. Priorisierte Empfehlungen (ARCHITECTURE_AUDIT-Ableitung)

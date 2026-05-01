@@ -2,6 +2,7 @@
 //!
 //! Momentum BUY nutzt buy_exact_sol_in statt global:buy für Market Orders.
 //! Discriminator [56, 252, 116, 8, 158, 223, 205, 95]. 17 Accounts identisch zu build_buy_ix.
+//! Instruction-Data: 8 disc + 8 + 8 u64 + 1 OptionBool (`track_volume=false` → Byte 0) = 25 Bytes.
 
 use ironcrab::solana::dex::pumpfun::{PumpFunDex, PUMPFUN_PROGRAM_ID};
 use ironcrab::solana::rpc::SolanaRpc;
@@ -32,7 +33,7 @@ fn derive_bonding_curve_v2(token_mint: &Pubkey) -> Pubkey {
     pda
 }
 
-/// A.25: market_order_buy_has_17_accounts — build_buy_exact_sol_ix liefert 17 Accounts, 24 Bytes Data.
+/// A.25: market_order_buy_has_17_accounts — build_buy_exact_sol_ix liefert 17 Accounts, 25 Bytes Data.
 #[test]
 fn market_order_buy_has_17_accounts() {
     let dex = setup_dex();
@@ -63,8 +64,12 @@ fn market_order_buy_has_17_accounts() {
     );
     assert_eq!(
         ix.data.len(),
-        24,
-        "Data must be 24 bytes (8 disc + 8 sol + 8 min_tokens)"
+        25,
+        "Data must be 25 bytes (8 disc + 8 spendable_sol_in + 8 min_tokens_out + 1 track_volume OptionBool)"
+    );
+    assert_eq!(
+        ix.data[24], 0,
+        "track_volume must be false (OptionBool) on hot path"
     );
 }
 
@@ -139,6 +144,12 @@ fn market_order_buy_data_serialization() {
         min_tokens_out, 42,
         "min_tokens_out must be serialized correctly"
     );
+    assert_eq!(
+        ix.data.len(),
+        25,
+        "Data must be 25 bytes including track_volume"
+    );
+    assert_eq!(ix.data[24], 0, "track_volume must be false (OptionBool)");
 }
 
 /// A.26: market_order_buy_bonding_curve_v2_last — bonding_curve_v2 ist letztes Account, !signer, !writable.
@@ -244,7 +255,8 @@ fn market_order_buy_same_accounts_as_regular_buy() {
     );
 }
 
-/// regular_buy_uses_different_discriminator — build_buy_ix nutzt global:buy, nicht buy_exact_sol_in.
+/// regular_buy_uses_different_discriminator — build_buy_ix nutzt global:buy, nicht buy_exact_sol_in;
+/// gleiches 25-Byte-Layout inkl. track_volume=false.
 #[test]
 fn regular_buy_uses_different_discriminator() {
     let dex = setup_dex();
@@ -255,6 +267,9 @@ fn regular_buy_uses_different_discriminator() {
     let creator = Pubkey::new_unique();
     let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID).expect("token program");
 
+    let amount = 1_000_000u64;
+    let max_sol_cost = 2_000_000u64;
+
     let ix = dex
         .build_buy_ix(
             &token_mint,
@@ -263,8 +278,8 @@ fn regular_buy_uses_different_discriminator() {
             &user_token_account,
             &creator,
             &token_program,
-            1_000_000,
-            2_000_000,
+            amount,
+            max_sol_cost,
         )
         .expect("build_buy_ix");
 
@@ -278,4 +293,20 @@ fn regular_buy_uses_different_discriminator() {
         BUY_EXACT_SOL_IN_DISCRIMINATOR,
         "build_buy_ix must NOT use buy_exact_sol_in discriminator"
     );
+    assert_eq!(
+        ix.data.len(),
+        25,
+        "global:buy data must be 25 bytes (8 disc + 8 amount + 8 max_sol_cost + 1 track_volume)"
+    );
+    assert_eq!(
+        u64::from_le_bytes(ix.data[8..16].try_into().unwrap()),
+        amount,
+        "amount must be serialized correctly"
+    );
+    assert_eq!(
+        u64::from_le_bytes(ix.data[16..24].try_into().unwrap()),
+        max_sol_cost,
+        "max_sol_cost must be serialized correctly"
+    );
+    assert_eq!(ix.data[24], 0, "track_volume must be false (OptionBool)");
 }

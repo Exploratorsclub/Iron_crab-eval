@@ -166,8 +166,9 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 
 ### A.25 PumpFun Market Order BUY (buy_exact_sol_in)
 - **Datei:** `tests/invariants_pumpfun_market_order.rs`
-- **Invariante:** build_buy_exact_sol_ix() liefert genau 17 Accounts (identisch zu build_buy_ix). Instruction-Data beginnt mit Discriminator [56, 252, 116, 8, 158, 223, 205, 95]. sol_amount und min_tokens_out werden korrekt serialisiert.
-- **Formal:** ix.accounts.len() == 17. ix.data[0..8] == [56, 252, 116, 8, 158, 223, 205, 95]. u64::from_le_bytes(ix.data[8..16]) == sol_amount. u64::from_le_bytes(ix.data[16..24]) == min_tokens_out.
+- **Invariante:** build_buy_exact_sol_ix() liefert genau 17 Accounts (identisch zu build_buy_ix). Instruction-Data beginnt mit Discriminator [56, 252, 116, 8, 158, 223, 205, 95]. spendable_sol_in und min_tokens_out werden als little-endian u64 serialisiert; danach folgt laut aktueller PumpFun-IDL `track_volume: OptionBool` — Hot-Path-Default `track_volume=false` (finales Byte `0`).
+- **Formal:** ix.accounts.len() == 17. ix.data[0..8] == [56, 252, 116, 8, 158, 223, 205, 95]. u64::from_le_bytes(ix.data[8..16]) == spendable_sol_in. u64::from_le_bytes(ix.data[16..24]) == min_tokens_out. ix.data.len() == 25. ix.data[24] == 0.
+- **Regulärer PumpFun BUY (global:buy):** build_buy_ix() nutzt Discriminator [0x66, 0x06, 0x3d, 0x12, 0x01, 0xda, 0xeb, 0xea], dasselbe 17-Account-Layout, ix.data.len() == 25, u64::from_le_bytes(ix.data[8..16]) == amount, u64::from_le_bytes(ix.data[16..24]) == max_sol_cost, ix.data[24] == 0.
 
 ### A.26 PumpFun Market Order bonding_curve_v2 Position
 - **Datei:** `tests/invariants_pumpfun_market_order.rs`
