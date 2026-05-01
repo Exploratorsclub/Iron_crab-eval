@@ -1,7 +1,7 @@
 //! Invarianten A.25–A.26: PumpFun Market Order BUY (buy_exact_sol_in)
 //!
 //! Momentum BUY nutzt buy_exact_sol_in statt global:buy für Market Orders.
-//! Discriminator [56, 252, 116, 8, 158, 223, 205, 95]. 17 Accounts identisch zu build_buy_ix.
+//! Discriminator [56, 252, 116, 8, 158, 223, 205, 95]. 18 Accounts identisch zu build_buy_ix (Scope 64: buyback letztes Konto).
 //! Instruction-Data: 8 disc + 8 + 8 u64 + 1 OptionBool (`track_volume=false` → Byte 0) = 25 Bytes.
 
 use ironcrab::solana::dex::pumpfun::{PumpFunDex, PUMPFUN_PROGRAM_ID};
@@ -33,9 +33,18 @@ fn derive_bonding_curve_v2(token_mint: &Pubkey) -> Pubkey {
     pda
 }
 
-/// A.25: market_order_buy_has_17_accounts — build_buy_exact_sol_ix liefert 17 Accounts, 25 Bytes Data.
+fn assert_buyback_fee_recipient_meta(meta: &solana_sdk::instruction::AccountMeta) {
+    assert!(
+        meta.pubkey.to_string().starts_with("5YxQ"),
+        "buyback fee recipient must match PUMPFUN_BUYBACK_FEE_RECIPIENT (prefix 5YxQ)"
+    );
+    assert!(!meta.is_signer, "buyback fee recipient must not be signer");
+    assert!(meta.is_writable, "buyback fee recipient must be writable");
+}
+
+/// A.25: market_order_buy_has_18_accounts — build_buy_exact_sol_ix liefert 18 Accounts, 25 Bytes Data.
 #[test]
-fn market_order_buy_has_17_accounts() {
+fn market_order_buy_has_18_accounts() {
     let dex = setup_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -59,8 +68,8 @@ fn market_order_buy_has_17_accounts() {
 
     assert_eq!(
         ix.accounts.len(),
-        17,
-        "buy_exact_sol_in must have 17 accounts (A.25)"
+        18,
+        "buy_exact_sol_in must have 18 accounts (A.25, Scope 64)"
     );
     assert_eq!(
         ix.data.len(),
@@ -152,9 +161,9 @@ fn market_order_buy_data_serialization() {
     assert_eq!(ix.data[24], 0, "track_volume must be false (OptionBool)");
 }
 
-/// A.26: market_order_buy_bonding_curve_v2_last — bonding_curve_v2 ist letztes Account, !signer, !writable.
+/// A.26: market_order_buy_buyback_last — Index 16 = bonding_curve_v2 (readonly), letztes Konto = Buyback-Fee-Recipient (writable).
 #[test]
-fn market_order_buy_bonding_curve_v2_last() {
+fn market_order_buy_buyback_last_bonding_curve_v2_at_16() {
     let dex = setup_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -177,14 +186,16 @@ fn market_order_buy_bonding_curve_v2_last() {
         .expect("build_buy_exact_sol_ix");
 
     let expected_bonding_curve_v2 = derive_bonding_curve_v2(&token_mint);
-    let last = ix.accounts.last().unwrap();
-
+    let bc_v2 = &ix.accounts[16];
     assert_eq!(
-        last.pubkey, expected_bonding_curve_v2,
-        "Last account must be bonding_curve_v2 PDA"
+        bc_v2.pubkey, expected_bonding_curve_v2,
+        "Index 16 must be bonding_curve_v2 PDA"
     );
-    assert!(!last.is_signer, "bonding_curve_v2 must not be signer");
-    assert!(!last.is_writable, "bonding_curve_v2 must not be writable");
+    assert!(!bc_v2.is_signer, "bonding_curve_v2 must not be signer");
+    assert!(!bc_v2.is_writable, "bonding_curve_v2 must not be writable");
+
+    let buyback = ix.accounts.last().expect("buyback account");
+    assert_buyback_fee_recipient_meta(buyback);
 }
 
 /// A.26: market_order_buy_same_accounts_as_regular_buy — Account-Layout identisch zu build_buy_ix.

@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 # Cloud Agents: git-Dependency fuer isolierte VM-Builds
 # CI + lokal: [patch] ueberschreibt mit Sibling-Pfad (siehe CI workflows)
-ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", branch = "architecture-rebuild" }
+ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", rev = "495e89f4509eb60841361ecb3b99e8a49f94a3ca" }
+# Pin: Scope 64 buyback-fee layout (PR #108 / cursor/scope64-pumpfun-buyback-fee-recipient). Revert to branch=architecture-rebuild after merge + lockfile regen.
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]

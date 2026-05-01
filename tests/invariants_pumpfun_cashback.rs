@@ -3,6 +3,9 @@
 //! Post-Cashback-Upgrade (Feb 2026): bonding_curve_v2 PDA, cashback_enabled in SELL,
 //! BondingCurveState::parse() liest cashback_enabled aus Byte 82.
 //!
+//! Scope 64 (Apr 2026): nach bonding_curve_v2 folgt der statische Buyback-Fee-Recipient
+//! (letztes Account, writable); bonding_curve_v2 ist readonly und direkt davor (BUY/SELL).
+//!
 //! A.30: cashback_enabled JetStream-Propagierung — PoolCacheUpdate metadata
 //! wird korrekt in LivePoolCache PumpFunState.cashback_enabled uebernommen.
 
@@ -35,9 +38,19 @@ fn derive_bonding_curve_v2(token_mint: &Pubkey) -> Pubkey {
     pda
 }
 
-/// A.22: build_buy_ix() liefert genau 17 Accounts, bonding_curve_v2 an Index 16.
+/// Buyback fee recipient (Scope 64): öffentliche Konstante `PUMPFUN_BUYBACK_FEE_RECIPIENT`, Prefix `5YxQ`.
+fn assert_buyback_fee_recipient_meta(meta: &solana_sdk::instruction::AccountMeta) {
+    assert!(
+        meta.pubkey.to_string().starts_with("5YxQ"),
+        "buyback fee recipient pubkey must match PUMPFUN_BUYBACK_FEE_RECIPIENT (prefix 5YxQ)"
+    );
+    assert!(!meta.is_signer, "buyback fee recipient must not be signer");
+    assert!(meta.is_writable, "buyback fee recipient must be writable");
+}
+
+/// A.22: build_buy_ix() liefert genau 18 Accounts; Index 16 = bonding_curve_v2 (readonly), 17 = buyback (writable).
 #[test]
-fn buy_ix_has_17_accounts() {
+fn buy_ix_has_18_accounts() {
     let dex = setup_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -61,23 +74,26 @@ fn buy_ix_has_17_accounts() {
 
     assert_eq!(
         ix.accounts.len(),
-        17,
-        "BUY must have 17 accounts (bonding_curve_v2 at 16)"
+        18,
+        "BUY must have 18 accounts (bonding_curve_v2 at 16, buyback fee recipient at 17)"
     );
 
     let expected_bonding_curve_v2 = derive_bonding_curve_v2(&token_mint);
-    let last = &ix.accounts[16];
+    let bc_v2 = &ix.accounts[16];
     assert_eq!(
-        last.pubkey, expected_bonding_curve_v2,
+        bc_v2.pubkey, expected_bonding_curve_v2,
         "Index 16 must be bonding_curve_v2 PDA"
     );
-    assert!(!last.is_signer, "bonding_curve_v2 must not be signer");
-    assert!(!last.is_writable, "bonding_curve_v2 must not be writable");
+    assert!(!bc_v2.is_signer, "bonding_curve_v2 must not be signer");
+    assert!(!bc_v2.is_writable, "bonding_curve_v2 must not be writable");
+
+    let buyback = &ix.accounts[17];
+    assert_buyback_fee_recipient_meta(buyback);
 }
 
-/// A.23: build_sell_ix(cashback=false) liefert 15 Accounts, bonding_curve_v2 an Index 14.
+/// A.23: build_sell_ix(cashback=false) liefert 16 Accounts; Index 14 = bonding_curve_v2, 15 = buyback (last).
 #[test]
-fn sell_ix_non_cashback_has_15_accounts() {
+fn sell_ix_non_cashback_has_16_accounts() {
     let dex = setup_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -102,22 +118,25 @@ fn sell_ix_non_cashback_has_15_accounts() {
 
     assert_eq!(
         ix.accounts.len(),
-        15,
-        "SELL non-cashback must have 15 accounts (bonding_curve_v2 at 14)"
+        16,
+        "SELL non-cashback must have 16 accounts (bonding_curve_v2 at 14, buyback at 15)"
     );
 
     let expected_bonding_curve_v2 = derive_bonding_curve_v2(&token_mint);
-    let last = &ix.accounts[14];
+    let bc_v2 = &ix.accounts[14];
     assert_eq!(
-        last.pubkey, expected_bonding_curve_v2,
+        bc_v2.pubkey, expected_bonding_curve_v2,
         "Index 14 must be bonding_curve_v2 PDA"
     );
-    assert!(!last.is_writable, "bonding_curve_v2 must not be writable");
+    assert!(!bc_v2.is_writable, "bonding_curve_v2 must not be writable");
+
+    let buyback = &ix.accounts[15];
+    assert_buyback_fee_recipient_meta(buyback);
 }
 
-/// A.23: build_sell_ix(cashback=true) liefert 16 Accounts, user_volume_accumulator an 14, bonding_curve_v2 an 15.
+/// A.23: build_sell_ix(cashback=true) liefert 17 Accounts; user_volume_accumulator 14, bonding_curve_v2 15, buyback 16 (last).
 #[test]
-fn sell_ix_cashback_has_16_accounts() {
+fn sell_ix_cashback_has_17_accounts() {
     let dex = setup_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -142,28 +161,31 @@ fn sell_ix_cashback_has_16_accounts() {
 
     assert_eq!(
         ix.accounts.len(),
-        16,
-        "SELL cashback must have 16 accounts (user_volume_accumulator at 14, bonding_curve_v2 at 15)"
+        17,
+        "SELL cashback must have 17 accounts (user_volume_accumulator at 14, bonding_curve_v2 at 15, buyback at 16)"
     );
 
     let expected_bonding_curve_v2 = derive_bonding_curve_v2(&token_mint);
-    let last = &ix.accounts[15];
+    let bc_v2 = &ix.accounts[15];
     assert_eq!(
-        last.pubkey, expected_bonding_curve_v2,
+        bc_v2.pubkey, expected_bonding_curve_v2,
         "Index 15 must be bonding_curve_v2 PDA"
     );
-    assert!(!last.is_writable, "bonding_curve_v2 must not be writable");
+    assert!(!bc_v2.is_writable, "bonding_curve_v2 must not be writable");
 
     let user_volume_acc = &ix.accounts[14];
     assert!(
         user_volume_acc.is_writable,
         "Index 14 (user_volume_accumulator) must be writable"
     );
+
+    let buyback = &ix.accounts[16];
+    assert_buyback_fee_recipient_meta(buyback);
 }
 
-/// A.22/A.23: bonding_curve_v2 ist immer das letzte Account (BUY + SELL).
+/// A.22/A.23 (Scope 64): Letztes Account ist der Buyback-Fee-Recipient; bonding_curve_v2 unmittelbar davor (BUY + SELL).
 #[test]
-fn bonding_curve_v2_always_last_account() {
+fn buyback_fee_recipient_last_bonding_curve_v2_before() {
     let dex = setup_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -187,10 +209,11 @@ fn bonding_curve_v2_always_last_account() {
         )
         .expect("build_buy_ix");
     assert_eq!(
-        buy_ix.accounts.last().unwrap().pubkey,
+        buy_ix.accounts[buy_ix.accounts.len() - 2].pubkey,
         expected_bonding_curve_v2,
-        "BUY: last account must be bonding_curve_v2"
+        "BUY: bonding_curve_v2 must be directly before buyback"
     );
+    assert_buyback_fee_recipient_meta(buy_ix.accounts.last().unwrap());
 
     // SELL non-cashback
     let sell_nc_ix = dex
@@ -207,10 +230,11 @@ fn bonding_curve_v2_always_last_account() {
         )
         .expect("build_sell_ix");
     assert_eq!(
-        sell_nc_ix.accounts.last().unwrap().pubkey,
+        sell_nc_ix.accounts[sell_nc_ix.accounts.len() - 2].pubkey,
         expected_bonding_curve_v2,
-        "SELL non-cashback: last account must be bonding_curve_v2"
+        "SELL non-cashback: bonding_curve_v2 must be directly before buyback"
     );
+    assert_buyback_fee_recipient_meta(sell_nc_ix.accounts.last().unwrap());
 
     // SELL cashback
     let sell_cb_ix = dex
@@ -227,10 +251,11 @@ fn bonding_curve_v2_always_last_account() {
         )
         .expect("build_sell_ix");
     assert_eq!(
-        sell_cb_ix.accounts.last().unwrap().pubkey,
+        sell_cb_ix.accounts[sell_cb_ix.accounts.len() - 2].pubkey,
         expected_bonding_curve_v2,
-        "SELL cashback: last account must be bonding_curve_v2"
+        "SELL cashback: bonding_curve_v2 must be directly before buyback"
     );
+    assert_buyback_fee_recipient_meta(sell_cb_ix.accounts.last().unwrap());
 }
 
 /// A.24: BondingCurveState::parse() liest cashback_enabled=true aus Byte 82.
