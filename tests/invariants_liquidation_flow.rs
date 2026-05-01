@@ -8,7 +8,7 @@
 //!
 //! PumpFun Bonding Curve Cold-Path (A.31, A.41): Stale Cache darf nicht blind dominieren.
 //! cashback_enabled muss im Cold Path per RPC verifiziert werden; falsches Layout
-//! (15 Accounts bei cashback=true) führt zu Custom(6024) Overflow (Bug #25).
+//! (16 Accounts bei cashback=false) führt zu Custom(6024) Overflow (Bug #25).
 
 use ironcrab::execution::live_pool_cache::{
     create_shared_cache, CachedPoolState, PumpAmmState, PumpFunState, SharedLivePoolCache,
@@ -140,10 +140,10 @@ fn get_pump_amm_pool_accounts_by_base_mint_returns_accounts() {
 
 // --- A.29: Liquidation Vollständigkeit ---
 
-/// PumpFun SELL mit cashback_enabled=true muss 16 Accounts haben.
-/// Verifiziert dass die Liquidation den korrekten Account-Count nutzt.
+/// PumpFun SELL mit cashback_enabled=true muss 17 Accounts haben.
+/// Letztes Meta = Buyback-Fee-Recipient (writable); bonding_curve_v2 ist Index 15 (readonly).
 #[test]
-fn liquidation_cashback_account_layout_16_accounts() {
+fn liquidation_cashback_account_layout_17_accounts() {
     let pumpfun = setup_pumpfun_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -168,18 +168,21 @@ fn liquidation_cashback_account_layout_16_accounts() {
 
     assert_eq!(
         ix.accounts.len(),
-        16,
-        "PumpFun SELL with cashback_enabled=true must have 16 accounts"
+        17,
+        "PumpFun SELL with cashback_enabled=true must have 17 accounts"
     );
 
-    // Letztes Account muss bonding_curve_v2 sein
     let last = ix.accounts.last().unwrap();
-    assert!(!last.is_signer, "bonding_curve_v2 is not signer");
-    assert!(!last.is_writable, "bonding_curve_v2 is readonly");
+    assert!(
+        last.pubkey.to_string().starts_with("5YxQ"),
+        "last account must be buyback fee recipient (PUMPFUN_BUYBACK_FEE_RECIPIENT)"
+    );
+    assert!(!last.is_signer, "buyback fee recipient is not signer");
+    assert!(last.is_writable, "buyback fee recipient is writable");
 }
 
 #[test]
-fn liquidation_non_cashback_account_layout_15() {
+fn liquidation_non_cashback_account_layout_16() {
     let pumpfun = setup_pumpfun_dex();
     let token_mint = Pubkey::new_unique();
     let (bonding_curve, _) = PumpFunDex::derive_bonding_curve_static(&token_mint);
@@ -204,15 +207,22 @@ fn liquidation_non_cashback_account_layout_15() {
 
     assert_eq!(
         ix.accounts.len(),
-        15,
-        "PumpFun SELL with cashback_enabled=false must have 15 accounts"
+        16,
+        "PumpFun SELL with cashback_enabled=false must have 16 accounts"
     );
+
+    let last = ix.accounts.last().unwrap();
+    assert!(
+        last.pubkey.to_string().starts_with("5YxQ"),
+        "last account must be buyback fee recipient (PUMPFUN_BUYBACK_FEE_RECIPIENT)"
+    );
+    assert!(last.is_writable, "buyback fee recipient is writable");
 }
 
 // --- PumpFun Bonding Curve Cold-Path (A.31, A.39) ---
 //
 // Stale Cache darf nicht blind dominieren. Wenn Cache cashback_enabled=false hat,
-// darf der Cold Path NICHT still erfolgreich ein 15-Account-Layout liefern, wenn
+// darf der Cold Path NICHT still erfolgreich ein 16-Account-Layout liefern, wenn
 // on-chain cashback_enabled=true wäre. Entweder: RPC-Verifikation → korrektes Layout,
 // oder: klarer Failure (Err).
 
@@ -245,7 +255,7 @@ fn setup_cache_with_pumpfun_stale_cashback() -> (SharedLivePoolCache, Pubkey, Pu
 
 /// A.31/A.41: Aktive PumpFun Bonding Curve (complete=false) + stale Cache (cashback_enabled=false)
 /// + Cold Path (allow_rpc_fallback=true) + RPC unreachable → klarer Failure (Err),
-/// NICHT stilles Ok mit falschem 15-Account-Layout.
+/// NICHT stilles Ok mit falschem 16-Account-Layout (non-cashback SELL ohne Buyback-Slot).
 /// Beweist: Cache-HIT mit cashback_enabled=false wird im Cold Path nicht blind vertraut.
 #[tokio::test]
 async fn pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure() {
@@ -272,6 +282,6 @@ async fn pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure() {
     assert!(
         result.is_err(),
         "A.31/A.41: Cold Path mit aktiver Bonding Curve, stale Cache (cashback=false) \
-         und RPC unreachable muss Err liefern, nicht stilles Ok mit falschem 15-Account-Layout"
+         und RPC unreachable muss Err liefern, nicht stilles Ok mit falschem 16-Account-Layout"
     );
 }
