@@ -383,11 +383,15 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 Begründung: War ursprünglich in Execution, wurde wegen Problemen nach Momentum verlagert. Ein eigener Positions-Ledger würde zusätzliche Komplexität und Sync-Punkte einführen. Momentum ist aktuell die autoritative Quelle für offene Positionen; ausreichend für den Betrieb.
 
 ### D.2 Execution Finality Consistency
-**Status:** Umgesetzt (2026-03-04)
+**Status:** ✅ Aktualisiert (2026-05-17), zuvor: Umgesetzt (2026-03-04)
 
-**Invariante:** Position darf nur aus FINALIZED executions entstehen (nicht confirmed).
+**Invariante:** Die Execution Engine nutzt **`confirm_commitment`** als operative Finalitätswahl. **Standard (Binary-Default) ist `"confirmed"`**, um Bestätigungslatenz zu senken und die Zeit zu verkürzen, in der Ressourcen (z. B. Pool-Locks) noch von einem **`pending`** Intent gebunden sein können, bevor spätere Intents denselben Scope nutzen dürfen.
 
-Umsetzung: `confirm_commitment` Config (default: "finalized"). Geyser TX-Subscription und RPC-Polling warten auf Finalized, um Reorg/Fork-Bugs auf Solana zu vermeiden.
+**Konsequenz:** Systemteile können **früher** auf als gelandet sichtbare Transaktionen reagieren (`confirmed`). Das akzeptiert **höheres Reorg-/Rollback-Risiko** gegenüber **`finalized`**.
+
+**Konfiguration:** Operatoren können **`confirm_commitment`** auf **`"finalized"`** setzen für konservativeres Verhalten (**höhere Latenz**, geringeres Finality-/Reorg-Risiko im Sinne später „absoluter“ Settlement-Sicht).
+
+**Umsetzung:** Geyser `transactions_status`/ATA-Watcher und RPC-Polling folgen diesem String wie in **Iron_crab** implementiert. **Hot-Reload** wirkt nicht vollständig auf die bereits aufgebaute Geyser-Subscription (Startwert/Restart siehe Produkt-/Ops-Doku).
 
 ---
 
