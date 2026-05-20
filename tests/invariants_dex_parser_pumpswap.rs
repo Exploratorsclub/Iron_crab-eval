@@ -10,6 +10,7 @@ use ironcrab::solana::geyser_listener::{GeyserTransactionUpdate, TokenAmount, To
 use solana_sdk::hash::hash;
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
+use std::time::Instant;
 
 /// Anchor discriminator für PumpSwap buy_exact_quote_in (Sha256 von 'global:buy_exact_quote_in', erste 8 Bytes)
 fn buy_discriminator() -> [u8; 8] {
@@ -133,6 +134,7 @@ fn pumpswap_buy_23_accounts_parsed() {
         post_balances: vec![9_000_000, 0],
         fee_lamports: 5000,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed =
@@ -186,6 +188,7 @@ fn pumpswap_sell_21_accounts_parsed() {
         post_balances: vec![7_000_000, 0],
         fee_lamports: 5000,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed =
@@ -228,6 +231,7 @@ fn pumpswap_insufficient_accounts_rejected() {
         post_balances: vec![],
         fee_lamports: 0,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update);
@@ -266,6 +270,7 @@ fn pumpswap_unknown_discriminator_rejected() {
         post_balances: vec![],
         fee_lamports: 0,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update);
@@ -308,6 +313,7 @@ fn pumpswap_pool_accounts_have_14_elements() {
         post_balances: vec![9_000_000, 0],
         fee_lamports: 0,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update).expect("BUY muss geparst werden");
@@ -345,6 +351,7 @@ fn pumpswap_pool_accounts_have_14_elements() {
         post_balances: vec![7_000_000, 0],
         fee_lamports: 0,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed_sell = parse_transaction_update(&update_sell).expect("SELL muss geparst werden");
@@ -390,6 +397,7 @@ fn pumpswap_buy_uses_correct_trader() {
         post_balances: vec![9_000_000, 0],
         fee_lamports: 0,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update).expect("BUY muss geparst werden");

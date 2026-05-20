@@ -12,6 +12,7 @@ use ironcrab::solana::geyser_listener::{
 use solana_sdk::hash::hash;
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
+use std::time::Instant;
 
 fn buy_discriminator() -> [u8; 8] {
     let out = hash(b"global:buy_exact_quote_in");
@@ -136,6 +137,7 @@ fn cpi_trade_parsed_from_inner_instruction() {
         post_balances: vec![9_000_000, 0],
         fee_lamports: 5000,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update)
@@ -189,6 +191,7 @@ fn top_level_takes_priority_over_inner() {
         post_balances: vec![9_000_000, 0],
         fee_lamports: 0,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update).expect("Top-Level PumpSwap muss geparst werden");
@@ -245,6 +248,7 @@ fn cpi_sell_parsed_from_inner_instruction() {
         post_balances: vec![7_000_000, 0],
         fee_lamports: 5000,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update)
@@ -285,6 +289,7 @@ fn no_matching_inner_instruction_returns_none() {
         post_balances: vec![],
         fee_lamports: 0,
         compute_units_consumed: None,
+        grpc_recv_at: Instant::now(),
     };
 
     let parsed = parse_transaction_update(&update);
