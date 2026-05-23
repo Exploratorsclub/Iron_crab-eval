@@ -103,6 +103,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 12 | PumpFun Cashback-Upgrade (A.22-A.24) | P0 | `invariants_pumpfun_cashback.rs` | erledigt |
 | 13 | PumpFun Market Order (A.25-A.26) | P0 | `invariants_pumpfun_market_order.rs` | erledigt |
 | 14 | PumpSwap Recovery-Semantik: Cold-Path force refresh, Hot-Path nicht blockieren | P0 | neue/erweiterte PumpSwap/Liquidation Invarianten | erledigt (Impl Scope 1-3 gemergt, Eval-Vertrag in PR #13 gemergt) |
+| 15 | Trailing Session High / quote-first STOP (I-13/I-14 Policy, PR #148) | P1 | `invariants_trailing_session_high.rs` | erledigt |
 
 ---
 
