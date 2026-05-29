@@ -241,6 +241,15 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Getestet:** pumpfun_cold_path_stale_cache_rpc_unreachable_clear_failure.
 - **Kontext:** Bug #25 (cashback_enabled defaults to false → falsches Layout → Custom(6024) Overflow). Getrennt von I-24d (PumpSwap pool_accounts Request/Reply). Layout-Baustein (cashback=true → 16 Accounts) bereits in A.23/A.29 abgedeckt.
 
+### A.45 Market-Data Ingest Non-Blocking (I-4b)
+- **Datei:** `tests/invariants_market_data_i4b_nonblocking_ingest.rs`
+- **Invariante (Phase R, eval-testbar ab R2):** Geyser-Ingest-Handler (TX/Account/Discovery vor NATS-Publish) duerfen **nicht blockieren** auf: Mutex/RwLock fuer JSONL, **tracked state**, Disk-I/O, Subscription-Sync oder unbounded Arbeit. Nur bounded `try_send`/`try_enqueue`; bei voller Queue **Drop + Metrik**, **nie warten**. Schwere Arbeit (tracked mutations, Evict, Subscription-Merge, Serialize JSONL) in dedizierten Threads (`md-state`, `md-jsonl`, `md-publish`).
+- **Eval-Scope (Lib-Blackbox):** `QueuedJsonlWriter` — kleine Queue (z. B. cap 4), Queue fuellen, `try_enqueue_json` / `try_enqueue_market_event` auf voller Queue liefern **sofort** `false` (< 200 ms, kein Deadlock); erfolgreiche Enqueues werden asynchron persistiert (`stats`, JSONL-Zeile).
+- **md-state (Binary, nicht in Eval gelinkt):** Verhalten von `md-state` (`MdStateCommand`, bounded `try_enqueue`) wird durch Impl-Unit-Tests abgedeckt: `pr_r2_tx_handler_returns_when_md_state_queue_full`, `pr_r2_burst_coalesces_single_schedule_sync_flag` in `Iron_crab/src/bin/market_data.rs`. Eval dokumentiert den Scope; kein Versuch, `market_data`-Binary-Funktionen direkt zu linken.
+- **Ergänzend:** I-4 HOT PATH GEYSER-ONLY (A.12), I-7 kein RPC im Hot Path ohne Freigabe.
+- **Getestet:** `i4b_jsonl_full_queue_try_enqueue_json_returns_immediately`; `i4b_jsonl_full_queue_try_enqueue_market_event_returns_immediately`; `i4b_jsonl_bounded_enqueue_delivers_when_capacity_available`.
+- **Kontext:** `plan_market_data_ingest_rebuild.md` Phase R1 (JSONL `QueuedJsonlMsg::MarketEvent`) + R2 (`md-state` Thread).
+
 ### A.44 PumpFun Bonding Curve Cold-Path Recovery (Force-Refresh + SLAVE-Folgezustand)
 - **Datei:** `tests/invariants_pumpfun_bonding_curve_recovery.rs`
 - **Invariante:** Cold-Path-Recovery nach strukturellem Cache-/State-Mismatch nutzt auf der Control-Plane `EnsurePumpfunBondingCurve` mit `force_refresh_pumpfun=true` (kein reines cache-first; On-Wire in denselben Tests). Autoritativer Refresh wird als `PoolCacheUpdate` (dex=`pumpfun`) in den SLAVE-`LivePoolCache` eingespielt; der aktualisierte `PumpFunState` (z. B. `cashback_enabled`, `creator`) ist danach im Cache beobachtbar — Folgekontext für genau einen bounded Retry auf execution-engine-Ebene (kein Zähler in der öffentlichen API). Regulärer Hot-Path-SELL (`allow_rpc_fallback=false`) blockiert nicht auf Recovery-Warten (Timeout-Vertrag im Test). Kein Claim auf alle strukturellen Sim-Fails oder vollständige EE-Orchestrierung.

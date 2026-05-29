@@ -6,12 +6,12 @@ edition = "2021"
 [dependencies]
 # Cloud Agents: git-Dependency fuer isolierte VM-Builds
 # CI + lokal: [patch] ueberschreibt mit Sibling-Pfad (siehe CI workflows)
-ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", rev = "f7b3092" }
+ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", branch = "architecture-rebuild" }
 # Hinweis: `ironcrab` nutzt `yellowstone-grpc` mit `branch = "master"` ohne feste Revision.
 # Neuere `master`-Commits erweitern die Proto-Structs (z. B. `cuckoo_accounts_filter`) und brechen
 # den Build von `ironcrab` @ f7b3092. Im `Cargo.lock` bleiben `yellowstone-grpc-*` daher auf
 # `branch=master#b39a415a219e842143f97440a0d0ef04207152c2` gepinnt — bei `cargo update` Lockfile pruefen.
-# Pin: Scope 64 buyback-fee layout (PR #108 / cursor/scope64-pumpfun-buyback-fee-recipient). Revert to branch=architecture-rebuild after merge + lockfile regen.
+# architecture-rebuild: I-4b QueuedJsonlWriter (R1/R2 market-data ingest); lockfile bei cargo update pruefen.
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]
