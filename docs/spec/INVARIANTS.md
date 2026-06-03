@@ -39,6 +39,11 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
     - Ist `[6]` beobachtet, `[7]` aber default/leer, muss der Build erfolgreich sein und die Fee-ATA aus dem beobachteten Recipient ableiten (SPL Associated Token für das Quote-Mint, verifizierbar per Standard-PDA).
     - Sind beide `[6]` und `[7]` default/leer, muss der Build mit einem klaren Fehler scheitern (Eval-Test prüft den Fehlertext u. a. auf beide Account-Namen `protocol_fee_recipient` / `protocol_fee_recipient_ta` und auf „missing“ bzw. Hinweis auf fehlende/beobachtete Fee-Accounts; kein stilles Ok mit erfundenem globalem Recipient).
   - **PumpSwap Build IX — Extended SELL / Cashback (öffentliche API):** Für SELL `base -> WSOL` mit 14er-`pool_accounts v1`, `sell_requires_cashback_remaining=true` und `sell_cashback_third_meta=Some(third)` muss `build_swap_ix_from_pool_accounts` erfolgreich sein, genau eine PumpSwap-Swap-Instruction liefern und auf dem Extended-SELL-Pfad **24 Account-Metas** exponieren; das letzte Meta muss exakt dem übergebenen `third` entsprechen.
+  - **PumpSwap SELL Layout-Tier 26 vs 27 (öffentliche API, P184j):**
+    - **26er-Tier** (`PUMPFUN_AMM_SELL_CASHBACK_TOTAL_ACCOUNTS` = 26): globale `fee_config` / `fee_program` an den von `pump_amm_sell_ix_uses_global_fee_at(26)` dokumentierten Indizes (**0-based 19 und 20**); kein separates Pre-Fee-Meta-Paar davor.
+    - **27er-Tier** (`PUMPFUN_AMM_SELL_EXTENDED_V2_TOTAL_ACCOUNTS` = 27): globale Fee-Metas an `pump_amm_sell_ix_uses_global_fee_at(27)` (**0-based 21 und 22**).
+    - **Ableitung:** `pump_amm_inferred_sell_ix_account_count(false, true, true) == 26`; mit `sell_requires_pre_fee_metas=true` unter gleichen Extended-Flags `== 27`.
+    - **Getestet:** `tests/invariants_pump_amm_sell_layout_tier.rs` (Decode-Fixture, Stuck-Pool-Konstanten, Index-Vertrag; vollständiger 26er-Build-Vertrag nach öffentlicher Impl-API P184j).
   - **Orca build_swap_ix:** user signer, user ATAs writable, data nicht leer (DoD §H)
   - **PumpFun build_swap_ix:** 2 IXs (ATA + swap), program_id pump.fun, user bei Index 6 signer+writable (DoD §H)
   - **TxBuilder SELL:** `tx_builder::build_tx_plan` mit PumpFun SELL-Intent (creator + min_out_raw) liefert `TxPlanOutcome::Planned` mit 2 IXs (ATA + pump.fun), program_id pump.fun, User Index 6 signer+writable. Pure Derivation (kein RPC).

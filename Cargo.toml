@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 # Cloud Agents: git-Dependency fuer isolierte VM-Builds
 # CI + lokal: [patch] ueberschreibt mit Sibling-Pfad (siehe CI workflows)
-ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", branch = "architecture-rebuild" }
+ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", rev = "1476dd68bfcc86a82ce02a15e8b53e93dae5bf88" }
 # Hinweis: `ironcrab` nutzt `yellowstone-grpc` mit `branch = "master"` ohne feste Revision.
 # Neuere `master`-Commits erweitern die Proto-Structs (z. B. `cuckoo_accounts_filter`) und brechen
 # den Build von `ironcrab` @ f7b3092. Im `Cargo.lock` bleiben `yellowstone-grpc-*` daher auf
