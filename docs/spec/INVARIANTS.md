@@ -252,8 +252,10 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Eval-Scope (Lib-Blackbox):** `QueuedJsonlWriter` — kleine Queue (z. B. cap 4), Queue fuellen, `try_enqueue_json` / `try_enqueue_market_event` auf voller Queue liefern **sofort** `false` (< 200 ms, kein Deadlock); erfolgreiche Enqueues werden asynchron persistiert (`stats`, JSONL-Zeile).
 - **md-state (Binary, nicht in Eval gelinkt):** Verhalten von `md-state` (`MdStateCommand`, bounded `try_enqueue`) wird durch Impl-Unit-Tests abgedeckt: `pr_r2_tx_handler_returns_when_md_state_queue_full`, `pr_r2_burst_coalesces_single_schedule_sync_flag` in `Iron_crab/src/bin/market_data.rs`. Eval dokumentiert den Scope; kein Versuch, `market_data`-Binary-Funktionen direkt zu linken.
 - **Ergänzend:** I-4 HOT PATH GEYSER-ONLY (A.12), I-7 kein RPC im Hot Path ohne Freigabe.
-- **Getestet:** `i4b_jsonl_full_queue_try_enqueue_json_returns_immediately`; `i4b_jsonl_full_queue_try_enqueue_market_event_returns_immediately`; `i4b_jsonl_bounded_enqueue_delivers_when_capacity_available`.
-- **Kontext:** `plan_market_data_ingest_rebuild.md` Phase R1 (JSONL `QueuedJsonlMsg::MarketEvent`) + R2 (`md-state` Thread).
+- **PR233 (Evolution, Impl PR #233):** `sync_geyser_tracked_accounts_core` (Evict + broadcast tracked sets) darf nur auf dem `md-state` OS-Thread laufen — via coalesced `MdStateCommand::FlushGeyserSyncDebounced`, nicht auf der Tokio-Ingest-Runtime.
+- **Source-Contract (PR233):** `tests/invariants_market_data_tracking_single_writer.rs` — `md_state_command_includes_flush_geyser_sync`; `global_ingest_liveness_os_thread`; `touch_tracked_vault_o1_contract`.
+- **Getestet:** `i4b_jsonl_full_queue_try_enqueue_json_returns_immediately`; `i4b_jsonl_full_queue_try_enqueue_market_event_returns_immediately`; `i4b_jsonl_bounded_enqueue_delivers_when_capacity_available`; PR233 Source-Contract in `invariants_market_data_tracking_single_writer.rs`.
+- **Kontext:** `plan_market_data_ingest_rebuild.md` Phase R1 (JSONL `QueuedJsonlMsg::MarketEvent`) + R2 (`md-state` Thread) + PR233 (Geyser-Sync Single-Writer).
 
 ### A.44 PumpFun Bonding Curve Cold-Path Recovery (Force-Refresh + SLAVE-Folgezustand)
 - **Datei:** `tests/invariants_pumpfun_bonding_curve_recovery.rs`

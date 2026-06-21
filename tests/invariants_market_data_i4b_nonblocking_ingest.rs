@@ -7,6 +7,16 @@
 //! `spawn_md_state_worker`). Eval linkt das Binary nicht. Verhalten dort ist durch Impl-
 //! Unit-Tests abgedeckt: `pr_r2_tx_handler_returns_when_md_state_queue_full`,
 //! `pr_r2_burst_coalesces_single_schedule_sync_flag` in `Iron_crab/src/bin/market_data.rs`.
+//!
+//! **PR233 (Impl PR #233):** `sync_geyser_tracked_accounts_core` (Evict + broadcast tracked sets)
+//! darf nur auf dem `md-state` OS-Thread laufen — via coalesced
+//! `MdStateCommand::FlushGeyserSyncDebounced`, nicht auf der Tokio-Ingest-Runtime.
+//! Source-Contract: `invariants_market_data_tracking_single_writer.rs`.
+//!
+//! Compile-Time-Dokumentation (öffentliche Impl-Doku / Supervisor-Handoff):
+//! - Thread-Namen: `"md-state"`, `"md-ingest-liveness"`, `"md-geyser-sync-debounce"`
+//! - Command-Variante: `FlushGeyserSyncDebounced`
+//!
 //! Eval I-4b lib-seitig = JSONL non-blocking + Spec-Eintrag; kein RPC/Geyser in diesen Tests.
 
 use ironcrab::ipc::{MarketEvent, MarketEventKind};
@@ -154,6 +164,6 @@ impl serde::Serialize for SlowHoldRecord {
         while self.hold.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(2));
         }
-        (&()).serialize(serializer)
+        ().serialize(serializer)
     }
 }
