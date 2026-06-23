@@ -13,6 +13,9 @@
 //! `MdStateCommand::FlushGeyserSyncDebounced`, nicht auf der Tokio-Ingest-Runtime.
 //! Source-Contract: `invariants_market_data_tracking_single_writer.rs`.
 //!
+//! **Phase 1 Hybrid (Impl PR #238):** Ingest/Sidefx ohne `tracked_*` Map-Reads; Register-Verbot
+//! im TX-/Account-parse-Pfad. Source-Contract: `invariants_market_data_i4b_ingest_no_tracked_read.rs`.
+//!
 //! Compile-Time-Dokumentation (öffentliche Impl-Doku / Supervisor-Handoff):
 //! - Thread-Namen: `"md-state"`, `"md-ingest-liveness"`, `"md-geyser-sync-debounce"`
 //! - Command-Variante: `FlushGeyserSyncDebounced`
