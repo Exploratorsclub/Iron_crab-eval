@@ -1,4 +1,4 @@
-//! Invariante I-4b / PR233: Tracking Single-Writer — Geyser sync/evict nur auf `md-state`.
+//! Invariante I-4b / PR233 + Phase 2a: Tracking Single-Writer — Geyser sync auf `md-track-worker`.
 //!
 //! Architektur-Source-Contract gegen `Iron_crab/src/bin/market_data.rs` (kein `market_data`-Binary-Link).
 //! Liest Impl-Quelltext nur als veröffentlichter Vertrags-Marker, nicht als private API.
@@ -24,13 +24,21 @@ fn market_data_rs_path() -> PathBuf {
         .join("market_data.rs")
 }
 
+fn skip_if_no_sibling_iron_crab() -> Option<PathBuf> {
+    let root = iron_crab_root();
+    let path = market_data_rs_path();
+    if !path.is_file() {
+        eprintln!(
+            "SKIP: Iron_crab Sibling-Checkout fehlt oder market_data.rs nicht lesbar unter {:?}",
+            root
+        );
+        return None;
+    }
+    Some(root)
+}
+
 fn read_market_data_source() -> String {
     let path = market_data_rs_path();
-    assert!(
-        path.is_file(),
-        "Iron_crab sibling checkout required at {:?} (market_data.rs missing)",
-        iron_crab_root()
-    );
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
@@ -63,10 +71,18 @@ fn extract_fn_block(source: &str, fn_name: &str) -> String {
     source[start..end].to_string()
 }
 
+fn fn_block_contains_batched_flush(fn_block: &str) -> bool {
+    fn_block.contains("sync_geyser_tracked_accounts_batched_flush")
+        || fn_block.contains("sync_geyser_tracked_accounts_batched_flush_with_deadline")
+}
+
 /// PR233: Debounce-Thread enqueued `FlushGeyserSyncDebounced` auf md-state — kein direktes
 /// `sync_geyser_tracked_accounts_batched_flush` im Tokio-/Debounce-Pfad.
 #[test]
 fn md_state_command_includes_flush_geyser_sync() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
     let source = read_market_data_source();
 
     assert!(
@@ -75,7 +91,7 @@ fn md_state_command_includes_flush_geyser_sync() {
     );
     assert!(
         source.contains("FlushGeyserSyncDebounced"),
-        "MdStateCommand must include FlushGeyserSyncDebounced for Geyser tracked flush on md-state"
+        "MdStateCommand must include FlushGeyserSyncDebounced for Geyser tracked flush scheduling"
     );
     assert!(
         source.contains("md_state_try_enqueue"),
@@ -92,21 +108,58 @@ fn md_state_command_includes_flush_geyser_sync() {
         "debounce path must schedule FlushGeyserSyncDebounced on md-state"
     );
     assert!(
-        !debounce_fn.contains("sync_geyser_tracked_accounts_batched_flush"),
+        !fn_block_contains_batched_flush(&debounce_fn),
         "schedule_geyser_sync_batch_debounced must not call sync_geyser_tracked_accounts_batched_flush \
          on Tokio/debounce thread (PR233 single-writer)"
+    );
+}
+
+/// Phase 2a (Impl PR #239): batched Geyser sync auf `md-track-worker`, md-state forward-only.
+#[test]
+fn phase2a_geyser_sync_on_track_worker_not_md_state_loop() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+    let source = read_market_data_source();
+
+    let process_job_fn = extract_fn_block(&source, "md_state_process_job");
+    assert!(
+        process_job_fn.contains("FlushGeyserSyncDebounced"),
+        "md_state_process_job must handle FlushGeyserSyncDebounced"
+    );
+    assert!(
+        process_job_fn.contains("track_worker_try_enqueue")
+            || process_job_fn.contains("ScheduleGeyserPushDebounced"),
+        "md_state_process_job must forward FlushGeyserSyncDebounced to track-worker \
+         (track_worker_try_enqueue / ScheduleGeyserPushDebounced)"
+    );
+
+    let push_fn = extract_fn_block(&source, "track_worker_execute_coalesced_push");
+    assert!(
+        fn_block_contains_batched_flush(&push_fn),
+        "track_worker_execute_coalesced_push must run sync_geyser_tracked_accounts_batched_flush \
+         (or _with_deadline) on md-track-worker (Phase 2a)"
+    );
+
+    assert!(
+        source.contains("spawn_track_worker") || source.contains("md-track-worker"),
+        "expected spawn_track_worker or md-track-worker OS thread (Phase 2a track-worker)"
     );
 
     let worker_fn = extract_fn_block(&source, "md_state_worker_loop");
     assert!(
-        worker_fn.contains("sync_geyser_tracked_accounts_batched_flush"),
-        "sync_geyser_tracked_accounts_batched_flush must run on md-state worker loop"
+        !fn_block_contains_batched_flush(&worker_fn),
+        "md_state_worker_loop must not call sync_geyser_tracked_accounts_batched_flush \
+         (Phase 2a: sync moved to md-track-worker)"
     );
 }
 
 /// PR233: Global-Ingest-Liveness auf OS-Thread (`md-ingest-liveness`), nicht nur Tokio-`spawn`.
 #[test]
 fn global_ingest_liveness_os_thread() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
     let source = read_market_data_source();
 
     assert!(
@@ -132,6 +185,9 @@ fn global_ingest_liveness_os_thread() {
 /// PR232-Follow-up: Vault-Touch O(1) — kein `values_mut()` Full-Map-Scan pro Vault.
 #[test]
 fn touch_tracked_vault_o1_contract() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
     let source = read_market_data_source();
     let touch_fn = extract_fn_block(&source, "touch_tracked_vault_pubkey");
 

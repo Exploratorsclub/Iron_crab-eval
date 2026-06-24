@@ -1,4 +1,5 @@
 //! Invariante I-4b / A.45 Phase 1 (Hybrid): Ingest + md-sidefx ohne `tracked_*` Map-Reads.
+//! Phase-2a Geyser-Sync auf `md-track-worker`: siehe `invariants_market_data_tracking_single_writer.rs`.
 //!
 //! Source-Contract gegen `Iron_crab/src/bin/market_data.rs` (Sibling-Checkout wie CI).
 //! Architektur-Grep-Gate: `might_be_relevant`, Account-Dispatch, TX-Handler und md-sidefx
