@@ -1,4 +1,4 @@
-//! Invariante I-4b / PR233 + Phase 2a: Tracking Single-Writer — Geyser sync auf `md-track-worker`.
+//! Invariante I-4b / PR233 + Phase 2a/2b: Tracking Single-Writer — Geyser sync + Momentum active pools auf `md-track-worker`.
 //!
 //! Architektur-Source-Contract gegen `Iron_crab/src/bin/market_data.rs` (kein `market_data`-Binary-Link).
 //! Liest Impl-Quelltext nur als veröffentlichter Vertrags-Marker, nicht als private API.
@@ -69,6 +69,69 @@ fn extract_fn_block(source: &str, fn_name: &str) -> String {
     }
     assert!(end > brace_start, "unclosed fn block for {fn_name}");
     source[start..end].to_string()
+}
+
+/// Extrahiert den innersten `fn`-Block, der `needle` enthaelt (Spec-Marker statt festem Funktionsnamen).
+fn extract_fn_block_containing(source: &str, needle: &str) -> String {
+    let needle_pos = source
+        .find(needle)
+        .unwrap_or_else(|| panic!("expected `{needle}` in market_data.rs"));
+    let fn_start = source[..needle_pos]
+        .rfind("fn ")
+        .unwrap_or_else(|| panic!("expected enclosing fn for `{needle}` in market_data.rs"));
+    let brace_start = source[fn_start..]
+        .find('{')
+        .map(|i| fn_start + i)
+        .expect("expected opening brace for enclosing fn block");
+    let mut depth = 0usize;
+    let mut end = brace_start;
+    for (offset, ch) in source[brace_start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = brace_start + offset + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(end > brace_start, "unclosed fn block containing `{needle}`");
+    source[fn_start..end].to_string()
+}
+
+/// Momentum NATS/coalesce-Pfad: bevorzugt `momentum_tracking_coalesce`, sonst Handler mit Spec-Subject.
+fn momentum_active_pools_path_block(source: &str) -> Option<String> {
+    if source.contains("fn momentum_tracking_coalesce") {
+        return Some(extract_fn_block(source, "momentum_tracking_coalesce"));
+    }
+    const MOMENTUM_ACTIVE_POOLS_SUBJECT: &str = "ironcrab.v1.momentum.active_pools";
+    if source.contains(MOMENTUM_ACTIVE_POOLS_SUBJECT) {
+        return Some(extract_fn_block_containing(
+            source,
+            MOMENTUM_ACTIVE_POOLS_SUBJECT,
+        ));
+    }
+    None
+}
+
+fn skip_if_no_phase2b_momentum_path(source: &str) -> Option<String> {
+    momentum_active_pools_path_block(source).or_else(|| {
+        eprintln!(
+            "SKIP: Phase 2b momentum active_pools path not present in sibling market_data.rs \
+             (expected fn momentum_tracking_coalesce or NATS subject ironcrab.v1.momentum.active_pools)"
+        );
+        None
+    })
+}
+
+fn track_worker_momentum_handler_block(source: &str) -> String {
+    if source.contains("fn track_worker_process_job") {
+        return extract_fn_block(source, "track_worker_process_job");
+    }
+    extract_fn_block_containing(source, "TrackWorkerCommand::ApplyMomentumActivePools")
 }
 
 fn fn_block_contains_batched_flush(fn_block: &str) -> bool {
@@ -151,6 +214,57 @@ fn phase2a_geyser_sync_on_track_worker_not_md_state_loop() {
         !fn_block_contains_batched_flush(&worker_fn),
         "md_state_worker_loop must not call sync_geyser_tracked_accounts_batched_flush \
          (Phase 2a: sync moved to md-track-worker)"
+    );
+}
+
+/// Phase 2b (Hybrid): Momentum `active_pools` NATS/coalesce enqueued auf `md-track-worker` only —
+/// kein `MdStateCommand::ApplyMomentumActivePools` / `md_state_try_enqueue` im Momentum-Pfad.
+#[test]
+fn phase2b_momentum_active_pools_bypasses_md_state() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+    let source = read_market_data_source();
+    let Some(momentum_fn) = skip_if_no_phase2b_momentum_path(&source) else {
+        return;
+    };
+
+    assert!(
+        momentum_fn.contains("track_worker_try_enqueue"),
+        "momentum active_pools path must enqueue bounded work on md-track-worker \
+         (track_worker_try_enqueue)"
+    );
+    assert!(
+        !(momentum_fn.contains("md_state_try_enqueue")
+            && momentum_fn.contains("MdStateCommand::ApplyMomentumActivePools")),
+        "momentum active_pools path must not enqueue MdStateCommand::ApplyMomentumActivePools \
+         via md_state_try_enqueue (Phase 2b: momentum bypasses md-state)"
+    );
+    assert!(
+        !momentum_fn.contains("apply_momentum_active_pools_in_md_state"),
+        "momentum NATS/coalesce path must not call apply_momentum_active_pools_in_md_state \
+         (Phase 2b)"
+    );
+
+    let process_job_fn = extract_fn_block(&source, "md_state_process_job");
+    assert!(
+        !process_job_fn.contains("ApplyMomentumActivePools"),
+        "md_state_process_job must not handle ApplyMomentumActivePools \
+         (variant removed from MdStateCommand in Phase 2b)"
+    );
+
+    assert!(
+        source.contains("TrackWorkerCommand::ApplyMomentumActivePools")
+            || (source.contains("enum TrackWorkerCommand")
+                && source.contains("ApplyMomentumActivePools")),
+        "TrackWorkerCommand must include ApplyMomentumActivePools (Phase 2b track-worker handler)"
+    );
+
+    let track_worker_fn = track_worker_momentum_handler_block(&source);
+    assert!(
+        track_worker_fn.contains("ApplyMomentumActivePools"),
+        "track-worker job handler must handle ApplyMomentumActivePools \
+         (Phase 2b coalesced Geyser push on md-track-worker)"
     );
 }
 
