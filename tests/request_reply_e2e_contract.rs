@@ -121,6 +121,7 @@ async fn wait_for_correlated_market_data_response(
             ControlResponseStatus::Ok
             | ControlResponseStatus::NotFound
             | ControlResponseStatus::Error => return Ok(()),
+            ControlResponseStatus::Busy => {}
         }
     }
 }

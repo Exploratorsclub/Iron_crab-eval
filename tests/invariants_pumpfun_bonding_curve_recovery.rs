@@ -465,6 +465,7 @@ fn request_reply_market_data_accepts_ensure_pumpfun_bonding_curve() {
                 ControlResponseStatus::Ok
                 | ControlResponseStatus::NotFound
                 | ControlResponseStatus::Error => return Ok(()),
+                ControlResponseStatus::Busy => {}
             }
         }
     });
