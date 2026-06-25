@@ -1,4 +1,4 @@
-//! Invariante A.28: Open Positions Counter Konsistenz (INVARIANTS.md)
+//! Invariante A.28 / A.48: Open Positions Counter Konsistenz (INVARIANTS.md)
 //!
 //! Single Source of Truth: count_non_zero_token_balances() = Anzahl non-zero Einträge
 //! in available_tokens. Verhindert Ghost Positions (KNOWN_BUG_PATTERNS #5).
@@ -126,4 +126,34 @@ fn count_non_zero_with_locks_active() {
     );
 
     manager.release_locks("sell-intent-1");
+}
+
+/// Phase 4 P3 / A.48: Divergence (ExecutionResult vs stale snapshot) darf open_positions count nicht erhoehen.
+#[test]
+fn phase4_divergence_does_not_increment_open_positions_count() {
+    let manager = LockManager::new(5_000_000_000).with_fairness(5, 60, 30, false);
+
+    // Confirmed BUY: authoritative execution fill sets balance SSOT
+    manager.set_available_token_balance("mint_A".to_string(), 1_000_000);
+    assert_eq!(manager.count_non_zero_token_balances(), 1);
+
+    // Stale / duplicate path: add on same mint must not create a second open position
+    manager.add_available_token_balance("mint_A".to_string(), 500_000);
+    assert_eq!(
+        manager.count_non_zero_token_balances(),
+        1,
+        "Divergence/re-apply on same mint must not increment open_positions count"
+    );
+
+    // Authoritative Geyser/execution set replaces value, count bleibt 1
+    manager.set_available_token_balance("mint_A".to_string(), 1_500_000);
+    assert_eq!(
+        manager.count_non_zero_token_balances(),
+        1,
+        "Authoritative set after divergence must keep single open position"
+    );
+
+    // Sell-all clears the only position — count 0
+    manager.set_available_token_balance("mint_A".to_string(), 0);
+    assert_eq!(manager.count_non_zero_token_balances(), 0);
 }

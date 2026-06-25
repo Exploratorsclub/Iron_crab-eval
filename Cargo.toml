@@ -12,6 +12,7 @@ ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", rev = "b4
 # den Build von `ironcrab` @ f7b3092. Im `Cargo.lock` bleiben `yellowstone-grpc-*` daher auf
 # `branch=master#b39a415a219e842143f97440a0d0ef04207152c2` gepinnt — bei `cargo update` Lockfile pruefen.
 # architecture-rebuild: Phase3 I-4e arb track_requests (b4c0598); lockfile bei cargo update pruefen.
+# Phase4 P3 wallet-position SSOT: ironcrab-rev erst nach Impl P2/P3-Merge bumpen; bis dahin grep-gates skippen.
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]

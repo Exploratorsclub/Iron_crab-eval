@@ -190,6 +190,7 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Datei:** `tests/invariants_open_positions.rs`
 - **Invariante:** `get_open_positions()` wird aus LockManager `count_non_zero_token_balances()` abgeleitet (nicht als separater Counter). Der Wert stimmt stets mit der Anzahl non-zero Eintraege in `available_tokens` ueberein.
 - **Formal:** `get_open_positions() == available_tokens.values().filter(|b| b > 0).count()`. Nach N BUY-Fills: count == N. Nach Sell-All: count == 0. Nach Restart-Recovery: count == tatsaechlicher Bestand.
+- **Phase 4 Erweiterung (P3, Momentum-Strategy-Contract):** Ergaenzt um **timed sync** — nach confirmed BUY/SELL darf Strategy-SSOT nicht von stale `WalletBalanceSnapshot` ueberschrieben werden; Divergenz ist beobachtbar (A.48 Source-Contract gegen Sibling `momentum_bot.rs` / `metrics.rs`). LockManager-Blackbox: `phase4_divergence_does_not_increment_open_positions_count`.
 - **Kontext:** KNOWN_BUG_PATTERNS #5 (Ghost Positions); dual-path tracking (Execution Result + Geyser Balance) verursachte Race Conditions und Counter-Drift.
 
 ### A.29 Liquidation Vollstaendigkeit (Kill-Switch SELL)
@@ -284,6 +285,19 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Regression I-4c:** Phase 2c bleibt — kein `ArbMultiDexReconcile` / `reconcile_arb_multi_dex_*` in `market_data.rs` (`phase2c_no_arb_multidex_reconcile_in_market_data` unveraendert).
 - **Getestet:** `phase3_only_arb_strategy_publishes_track_requests_topic`; `phase3_arb_track_requests_schema_roundtrip`; `phase3_arb_track_requests_bypasses_md_state`; `phase3_arb_track_requests_uses_track_worker`.
 - **Kontext:** Impl PR #242 Phase 3 auf `architecture-rebuild`; Arb-Reconcile-Pin-Entscheidung verlagert von md-state-Ingest (Phase 2c) nach arb-strategy → NATS → md-track-worker.
+
+### A.48 Phase 4 Positions-Wallet SSOT (Momentum timed sync, Plan §6.3 P3)
+- **Dateien:** `tests/invariants_momentum_wallet_position_ssot.rs`, `tests/invariants_open_positions.rs` (LockManager-Erweiterung)
+- **Invariante:** `open_positions == wallet non-zero tokens` gilt erweitert um **timed sync** fuer Momentum-Strategy-SSOT: Nach confirmed BUY/SELL (ExecutionResult) darf der Strategy-Balance-SSOT nicht von einem stale `WalletBalanceSnapshot` ueberschrieben werden. Divergenz zwischen Strategy-SSOT und Wallet-Snapshot muss beobachtbar sein (Metrik).
+- **Formal (Momentum):** Confirmed `ExecutionResult` mit `fill_out`/`fill_in` → `record_confirmed_execution_token_balance` (Strategy-SSOT). `WalletBalanceSnapshot`-Handler prueft `wallet_snapshot_must_not_clobber_confirmed_balance` bevor Position/Balance mutiert wird. Bei Abweichung: `momentum_wallet_balance_divergence` > 0 (oder inkrement).
+- **Formal (LockManager, A.28-Regression):** `count_non_zero_token_balances()` erhoeht sich nicht bei Duplicate-/Stale-Updates auf demselben Mint (`set` + `add` auf gleichen Mint = weiterhin 1 Position bis Sell-All).
+- **Source-Contract (Sibling `Iron_crab`, grep — skip wenn Impl Phase 4 P2/P3 noch nicht gemergt):**
+  1. `momentum_bot.rs` `handle_execution_result`: confirmed-Pfad ruft `record_confirmed_execution_token_balance` und `open_position` (BUY) auf Basis von `ExecutionResult`-Fills.
+  2. `momentum_bot.rs` `MarketEventKind::WalletBalanceSnapshot`-Arm: enthaelt Guard-Marker `wallet_snapshot_must_not_clobber_confirmed_balance`.
+  3. `metrics.rs`: exportiert `momentum_wallet_balance_divergence` in Prometheus-`line!`-Output.
+- **Getestet:** `phase4_momentum_execution_result_mutates_balance_marker`; `phase4_momentum_wallet_balance_divergence_metric_exported`; `phase4_divergence_does_not_increment_open_positions_count`.
+- **Regression I-13:** Bestehende A.28-Tests unveraendert.
+- **Kontext:** Plan `plan_hybrid_rollback_tracking_architecture_20260623.md` Phase 4 §6.3 P3; paralleles Impl P1–P2–P4 auf `architecture-rebuild`. Eval-Gates skippen bis Sibling-Marker vorhanden (wie Phase 2b grep gates).
 
 ### A.44 PumpFun Bonding Curve Cold-Path Recovery (Force-Refresh + SLAVE-Folgezustand)
 - **Datei:** `tests/invariants_pumpfun_bonding_curve_recovery.rs`
