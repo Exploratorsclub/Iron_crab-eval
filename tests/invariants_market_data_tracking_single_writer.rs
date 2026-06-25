@@ -1,4 +1,4 @@
-//! Invariante I-4b / PR233 + Phase 2a/2b: Tracking Single-Writer — Geyser sync + Momentum active pools auf `md-track-worker`.
+//! Invariante I-4b / PR233 + Phase 2a/2b/3: Tracking Single-Writer — Geyser sync + Momentum/Arb active pools auf `md-track-worker`.
 //!
 //! Architektur-Source-Contract gegen `Iron_crab/src/bin/market_data.rs` (kein `market_data`-Binary-Link).
 //! Liest Impl-Quelltext nur als veröffentlichter Vertrags-Marker, nicht als private API.
@@ -8,6 +8,9 @@
 
 use std::fs;
 use std::path::PathBuf;
+
+const PUBLISH_CALL_MARKER: &str = "nats.publish(TOPIC_ARB_TRACK_REQUESTS";
+const SUBSCRIBE_CALL_MARKER: &str = "nats.subscribe(TOPIC_ARB_TRACK_REQUESTS";
 
 /// Geschwister-Checkout: `parent/ironcrab-eval` + `parent/Iron_crab` (wie `golden_replay_blackbox.rs`).
 fn iron_crab_root() -> PathBuf {
@@ -132,6 +135,55 @@ fn track_worker_momentum_handler_block(source: &str) -> String {
         return extract_fn_block(source, "track_worker_process_job");
     }
     extract_fn_block_containing(source, "TrackWorkerCommand::ApplyMomentumActivePools")
+}
+
+/// Production code only — test modules in the same file must not affect grep gates.
+fn production_source(source: &str) -> &str {
+    source
+        .split("#[cfg(test)]")
+        .next()
+        .expect("production source section")
+}
+
+/// Bin sources with inline `#[cfg(test)]` hooks before production code ends:
+/// strip only trailing `#[cfg(test)] mod …` test modules.
+fn production_bin_source(source: &str) -> &str {
+    if let Some(idx) = source.find("#[cfg(test)]\nmod ") {
+        return &source[..idx];
+    }
+    production_source(source)
+}
+
+/// Arb NATS/coalesce-Pfad: bevorzugt `spawn_arb_tracking_coalescer`, sonst Handler mit Spec-Subject.
+fn arb_track_requests_path_block(source: &str) -> Option<String> {
+    if source.contains("fn spawn_arb_tracking_coalescer") {
+        return Some(extract_fn_block(source, "spawn_arb_tracking_coalescer"));
+    }
+    const ARB_TRACK_REQUESTS_SUBJECT: &str = "ironcrab.v1.arb.track_requests";
+    if source.contains(ARB_TRACK_REQUESTS_SUBJECT) {
+        return Some(extract_fn_block_containing(
+            source,
+            ARB_TRACK_REQUESTS_SUBJECT,
+        ));
+    }
+    None
+}
+
+fn skip_if_no_phase3_arb_path(source: &str) -> Option<String> {
+    arb_track_requests_path_block(source).or_else(|| {
+        eprintln!(
+            "SKIP: Phase 3 arb track_requests path not present in sibling market_data.rs \
+             (expected fn spawn_arb_tracking_coalescer or NATS subject ironcrab.v1.arb.track_requests)"
+        );
+        None
+    })
+}
+
+fn track_worker_arb_handler_block(source: &str) -> String {
+    if source.contains("fn track_worker_process_job") {
+        return extract_fn_block(source, "track_worker_process_job");
+    }
+    extract_fn_block_containing(source, "TrackWorkerCommand::ApplyArbTrackRequests")
 }
 
 fn fn_block_contains_batched_flush(fn_block: &str) -> bool {
@@ -265,6 +317,86 @@ fn phase2b_momentum_active_pools_bypasses_md_state() {
         track_worker_fn.contains("ApplyMomentumActivePools"),
         "track-worker job handler must handle ApplyMomentumActivePools \
          (Phase 2b coalesced Geyser push on md-track-worker)"
+    );
+}
+
+/// Phase 3 (Hybrid, I-4e): Arb `track_requests` NATS/coalesce enqueued auf `md-track-worker` only —
+/// kein `MdStateCommand::ApplyArbTrackRequests` / `md_state_try_enqueue` im Arb-Pfad.
+#[test]
+fn phase3_arb_track_requests_bypasses_md_state() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+    let source = read_market_data_source();
+    let prod = production_bin_source(&source);
+    let Some(arb_fn) = skip_if_no_phase3_arb_path(&source) else {
+        return;
+    };
+
+    assert!(
+        arb_fn.contains("track_worker_try_enqueue"),
+        "arb track_requests path must enqueue bounded work on md-track-worker \
+         (track_worker_try_enqueue)"
+    );
+    assert!(
+        !(arb_fn.contains("md_state_try_enqueue")
+            && arb_fn.contains("MdStateCommand::ApplyArbTrackRequests")),
+        "arb track_requests path must not enqueue MdStateCommand::ApplyArbTrackRequests \
+         via md_state_try_enqueue (Phase 3: arb bypasses md-state)"
+    );
+    assert!(
+        !arb_fn.contains("md_state_try_enqueue"),
+        "arb track_requests coalescer must not call md_state_try_enqueue (Phase 3)"
+    );
+    assert!(
+        !prod.contains("MdStateCommand::ApplyArbTrackRequests"),
+        "MdStateCommand must not include ApplyArbTrackRequests variant (Phase 3)"
+    );
+
+    let process_job_fn = extract_fn_block(&source, "md_state_process_job");
+    assert!(
+        !process_job_fn.contains("ApplyArbTrackRequests"),
+        "md_state_process_job must not handle ApplyArbTrackRequests \
+         (variant absent from MdStateCommand in Phase 3)"
+    );
+
+    assert!(
+        source.contains("TrackWorkerCommand::ApplyArbTrackRequests")
+            || (source.contains("enum TrackWorkerCommand")
+                && source.contains("ApplyArbTrackRequests")),
+        "TrackWorkerCommand must include ApplyArbTrackRequests (Phase 3 track-worker handler)"
+    );
+}
+
+/// Phase 3 (Hybrid, I-4e): Arb `track_requests` coalescer + track-worker handler — symmetrisch Phase 2b.
+#[test]
+fn phase3_arb_track_requests_uses_track_worker() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+    let source = read_market_data_source();
+    let Some(arb_fn) = skip_if_no_phase3_arb_path(&source) else {
+        return;
+    };
+
+    assert!(
+        arb_fn.contains("TrackWorkerCommand::ApplyArbTrackRequests"),
+        "spawn_arb_tracking_coalescer must enqueue TrackWorkerCommand::ApplyArbTrackRequests"
+    );
+    assert!(
+        source.contains(SUBSCRIBE_CALL_MARKER),
+        "market_data must subscribe to TOPIC_ARB_TRACK_REQUESTS (Phase 3 consumer)"
+    );
+    assert!(
+        !source.contains(PUBLISH_CALL_MARKER),
+        "market_data must not publish TOPIC_ARB_TRACK_REQUESTS (Phase 3)"
+    );
+
+    let track_worker_fn = track_worker_arb_handler_block(&source);
+    assert!(
+        track_worker_fn.contains("ApplyArbTrackRequests"),
+        "track-worker job handler must handle ApplyArbTrackRequests \
+         (Phase 3 coalesced Geyser push on md-track-worker)"
     );
 }
 
