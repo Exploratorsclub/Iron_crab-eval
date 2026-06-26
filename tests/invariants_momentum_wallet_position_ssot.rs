@@ -1,8 +1,7 @@
 //! Invariante A.48 Phase 4 P3: Momentum Strategy SSOT vs WalletBalanceSnapshot (timed sync).
 //!
-//! Source-Contract gegen Sibling `Iron_crab/src/bin/momentum_bot.rs` und `Iron_crab/src/metrics.rs`.
-//! Architektur-Grep-Gates auf dokumentierte Phase-4-Marker (Impl P2/P3); skip wenn Sibling oder
-//! Marker noch nicht gemergt (paralleles Impl Phase 4 P1–P2–P4).
+//! Source-Contract gegen Sibling `Iron_crab/src/bin/momentum_bot.rs` und `Iron_crab/src/metrics.rs`
+//! (Impl PR #243 @ 7df6298). Architektur-Grep-Gates auf dokumentierte Phase-4-Marker.
 //!
 //! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; keine Aenderung an `Iron_crab/src/`;
 //! keine Blackbox-Assertions auf private Datenstrukturen — nur dokumentierte Architektur-Strings.
@@ -10,13 +9,15 @@
 use std::fs;
 use std::path::PathBuf;
 
-/// Impl P2/P3: confirmed ExecutionResult schreibt Strategy-SSOT-Balance (nicht nur open_position).
-const PHASE4_CONFIRMED_EXECUTION_BALANCE_MARKER: &str = "record_confirmed_execution_token_balance";
-/// Impl P2: WalletBalanceSnapshot darf confirmed balance nicht ohne Guard ueberschreiben.
-const PHASE4_WALLET_SNAPSHOT_CLOBBER_GUARD: &str =
-    "wallet_snapshot_must_not_clobber_confirmed_balance";
-/// Impl P3: Divergenz Strategy-SSOT vs Wallet-Snapshot beobachtbar in Metriken.
-const PHASE4_DIVERGENCE_METRIC_MARKER: &str = "momentum_wallet_balance_divergence";
+/// Impl P2: confirmed BUY/SELL size from `ExecutionResult.fill_out` / `fill_in`, not snapshot.
+const PHASE4_CONFIRMED_EXECUTION_FILL_MARKER: &str = "token_amount = fill_out.raw";
+/// Impl P2: Live positions — snapshot hint only, no token_amount overwrite.
+const PHASE4_WALLET_SNAPSHOT_CLOBBER_GUARD: &str = "hint only; no size overwrite";
+/// Impl P4: divergence recording between confirmed overlay and snapshot hint.
+const PHASE4_DIVERGENCE_RECORD_MARKER: &str = "record_wallet_balance_divergence_if_any";
+/// Impl P4: Prometheus export (total + per-mint lamports).
+const PHASE4_DIVERGENCE_METRIC_TOTAL: &str = "momentum_wallet_balance_divergence_total";
+const PHASE4_DIVERGENCE_METRIC_LAMPORTS: &str = "momentum_wallet_balance_divergence_lamports";
 
 fn iron_crab_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -36,17 +37,16 @@ fn metrics_rs_path() -> PathBuf {
     iron_crab_root().join("src").join("metrics.rs")
 }
 
-fn skip_if_no_sibling_iron_crab() -> Option<PathBuf> {
+fn require_sibling_iron_crab() -> PathBuf {
     let root = iron_crab_root();
     let path = momentum_bot_rs_path();
-    if !path.is_file() {
-        eprintln!(
-            "SKIP: Iron_crab Sibling-Checkout fehlt oder momentum_bot.rs nicht lesbar unter {:?}",
-            root
-        );
-        return None;
-    }
-    Some(root)
+    assert!(
+        path.is_file(),
+        "Iron_crab Sibling-Checkout fehlt oder momentum_bot.rs nicht lesbar unter {:?} \
+         (CI: dual-checkout neben ironcrab-eval)",
+        root
+    );
+    root
 }
 
 fn read_momentum_bot_source() -> String {
@@ -56,33 +56,61 @@ fn read_momentum_bot_source() -> String {
 
 fn read_metrics_source() -> String {
     let path = metrics_rs_path();
-    if !path.is_file() {
-        return String::new();
-    }
+    assert!(
+        path.is_file(),
+        "Iron_crab sibling metrics.rs not readable at {}",
+        path.display()
+    );
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-/// Production code only — test modules in the same file must not affect grep gates.
-fn production_source(source: &str) -> &str {
-    source
-        .split("#[cfg(test)]")
-        .next()
-        .expect("production source section")
+/// momentum_bot.rs: strip only the trailing `mod tests { ... }` block (production code follows it).
+fn source_excluding_mod_tests_block(source: &str) -> String {
+    const MOD_TESTS: &str =
+        "#[cfg(test)]\n#[allow(clippy::field_reassign_with_default)]\nmod tests";
+    let Some(start) = source.find(MOD_TESTS) else {
+        return source.to_string();
+    };
+    let open = source[start..]
+        .find('{')
+        .map(|i| start + i)
+        .expect("mod tests opening brace");
+    let mut depth = 0usize;
+    let mut end = open;
+    for (offset, ch) in source[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = open + offset + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = String::with_capacity(source.len());
+    out.push_str(&source[..start]);
+    out.push_str(&source[end..]);
+    out
 }
 
-/// Bin sources with inline `#[cfg(test)]` hooks before production code ends.
-fn production_bin_source(source: &str) -> &str {
-    if let Some(idx) = source.find("#[cfg(test)]\nmod ") {
+/// metrics.rs: inline `#[cfg(test)]` helpers mid-file — strip only trailing test modules.
+fn production_metrics_source(source: &str) -> &str {
+    if let Some(idx) = source.find("#[cfg(test)]\nmod momentum_latency_metrics_tests") {
         return &source[..idx];
     }
-    production_source(source)
+    source
 }
 
-/// Extrahiert den Rust-Funktionsblock ab `fn {name}` inkl. geschweifter Klammern.
+/// Extrahiert den Rust-Funktionsblock ab `fn {name}` / `async fn {name}` inkl. geschweifter Klammern.
 fn extract_fn_block(source: &str, fn_name: &str) -> String {
+    let needle_async = format!("async fn {fn_name}");
     let needle = format!("fn {fn_name}");
     let start = source
-        .find(&needle)
+        .find(&needle_async)
+        .or_else(|| source.find(&needle))
         .unwrap_or_else(|| panic!("expected fn {fn_name} in momentum_bot.rs"));
     let brace_start = source[start..]
         .find('{')
@@ -107,19 +135,17 @@ fn extract_fn_block(source: &str, fn_name: &str) -> String {
     source[start..end].to_string()
 }
 
-/// Extrahiert den innersten `match`-Arm-Block, der `needle` enthaelt.
-fn extract_match_arm_containing(source: &str, needle: &str) -> String {
+/// Extrahiert den `WalletBalanceSnapshot`-Match-Arm in `process_market_event`.
+fn extract_wallet_balance_snapshot_arm(source: &str) -> String {
+    let needle = "MarketEventKind::WalletBalanceSnapshot";
     let needle_pos = source
         .find(needle)
         .unwrap_or_else(|| panic!("expected `{needle}` in momentum_bot.rs"));
-    let arm_start = source[..needle_pos]
-        .rfind("MarketEventKind::")
-        .or_else(|| source[..needle_pos].rfind("WalletBalanceSnapshot"))
-        .unwrap_or_else(|| panic!("expected match arm for `{needle}` in momentum_bot.rs"));
+    let arm_start = source[..needle_pos].rfind(needle).unwrap_or(needle_pos);
     let brace_start = source[needle_pos..]
-        .find('{')
-        .map(|i| needle_pos + i)
-        .expect("expected opening brace for WalletBalanceSnapshot arm");
+        .find("=> {")
+        .map(|i| needle_pos + i + 3)
+        .expect("expected `=> {` body for WalletBalanceSnapshot match arm");
     let mut depth = 0usize;
     let mut end = brace_start;
     for (offset, ch) in source[brace_start..].char_indices() {
@@ -142,67 +168,51 @@ fn extract_match_arm_containing(source: &str, needle: &str) -> String {
     source[arm_start..end].to_string()
 }
 
-fn skip_if_no_phase4_momentum_wallet_ssot_markers(source: &str) -> bool {
-    if !source.contains(PHASE4_CONFIRMED_EXECUTION_BALANCE_MARKER) {
-        eprintln!(
-            "SKIP: Phase 4 P3 `{PHASE4_CONFIRMED_EXECUTION_BALANCE_MARKER}` not present in sibling momentum_bot.rs"
-        );
-        return true;
-    }
-    if !source.contains(PHASE4_WALLET_SNAPSHOT_CLOBBER_GUARD) {
-        eprintln!(
-            "SKIP: Phase 4 P2 `{PHASE4_WALLET_SNAPSHOT_CLOBBER_GUARD}` not present in sibling momentum_bot.rs"
-        );
-        return true;
-    }
-    false
-}
-
-fn skip_if_no_phase4_divergence_metric(source: &str) -> bool {
-    if !source.contains(PHASE4_DIVERGENCE_METRIC_MARKER) {
-        eprintln!(
-            "SKIP: Phase 4 P3 `{PHASE4_DIVERGENCE_METRIC_MARKER}` not present in sibling metrics.rs"
-        );
-        return true;
-    }
-    false
-}
-
 /// Phase 4 P3: confirmed ExecutionResult mutiert Strategy-SSOT; WalletSnapshot mit Guard.
 #[test]
 fn phase4_momentum_execution_result_mutates_balance_marker() {
-    if skip_if_no_sibling_iron_crab().is_none() {
-        return;
-    }
+    require_sibling_iron_crab();
     let source = read_momentum_bot_source();
-    let prod = production_bin_source(&source);
-    if skip_if_no_phase4_momentum_wallet_ssot_markers(prod) {
-        return;
-    }
+    let prod = source_excluding_mod_tests_block(&source);
 
-    let handle_er = extract_fn_block(prod, "handle_execution_result");
+    assert!(
+        prod.contains(PHASE4_DIVERGENCE_RECORD_MARKER),
+        "momentum_bot must define `{PHASE4_DIVERGENCE_RECORD_MARKER}` (Phase 4 P4 divergence)"
+    );
+
+    let handle_er = extract_fn_block(&prod, "handle_execution_result");
     assert!(
         handle_er.contains("ExecutionStatus::Confirmed"),
         "handle_execution_result must handle confirmed executions (Phase 4 SSOT contract)"
     );
     assert!(
-        handle_er.contains(PHASE4_CONFIRMED_EXECUTION_BALANCE_MARKER),
-        "confirmed path must record strategy SSOT via `{PHASE4_CONFIRMED_EXECUTION_BALANCE_MARKER}`"
+        handle_er.contains("open_position"),
+        "confirmed BUY path must call open_position (Momentum overlay; A.28 extension)"
     );
     assert!(
-        handle_er.contains("open_position"),
-        "confirmed BUY path must still call open_position (Momentum overlay; A.28 extension)"
+        handle_er.contains(PHASE4_CONFIRMED_EXECUTION_FILL_MARKER),
+        "confirmed BUY must size position from ExecutionResult fill_out \
+         (`{PHASE4_CONFIRMED_EXECUTION_FILL_MARKER}`)"
     );
     assert!(
         handle_er.contains("fill_out") || handle_er.contains("fill_in"),
         "confirmed path must derive balance from ExecutionResult fill fields"
     );
 
-    let wallet_arm = extract_match_arm_containing(prod, "MarketEventKind::WalletBalanceSnapshot");
+    let wallet_arm =
+        extract_wallet_balance_snapshot_arm(&extract_fn_block(&prod, "process_market_event"));
     assert!(
         wallet_arm.contains(PHASE4_WALLET_SNAPSHOT_CLOBBER_GUARD),
-        "WalletBalanceSnapshot handler must guard against clobbering confirmed execution balance \
+        "WalletBalanceSnapshot handler must not clobber confirmed position size \
          (`{PHASE4_WALLET_SNAPSHOT_CLOBBER_GUARD}`)"
+    );
+    assert!(
+        wallet_arm.contains("balance=0 ignored for Live position"),
+        "WalletBalanceSnapshot zero-balance must not close Live/ExecutionResult positions"
+    );
+    assert!(
+        wallet_arm.contains(PHASE4_DIVERGENCE_RECORD_MARKER),
+        "WalletBalanceSnapshot path must record divergence via `{PHASE4_DIVERGENCE_RECORD_MARKER}`"
     );
     assert!(
         wallet_arm.contains("balance_raw"),
@@ -213,21 +223,20 @@ fn phase4_momentum_execution_result_mutates_balance_marker() {
 /// Phase 4 P3: Divergenz-Metrik exportiert (Strategy-SSOT vs Wallet-Snapshot).
 #[test]
 fn phase4_momentum_wallet_balance_divergence_metric_exported() {
-    if skip_if_no_sibling_iron_crab().is_none() {
-        return;
-    }
+    require_sibling_iron_crab();
     let metrics = read_metrics_source();
-    if metrics.is_empty() {
-        eprintln!("SKIP: sibling metrics.rs not readable");
-        return;
-    }
-    let prod = production_source(&metrics);
-    if skip_if_no_phase4_divergence_metric(prod) {
-        return;
-    }
+    let prod = production_metrics_source(&metrics);
 
     assert!(
-        prod.contains("line!(") && prod.contains(PHASE4_DIVERGENCE_METRIC_MARKER),
-        "metrics render must expose `{PHASE4_DIVERGENCE_METRIC_MARKER}` via line! (Prometheus text)"
+        prod.contains(PHASE4_DIVERGENCE_METRIC_TOTAL),
+        "metrics must define `{PHASE4_DIVERGENCE_METRIC_TOTAL}`"
+    );
+    assert!(
+        prod.contains(PHASE4_DIVERGENCE_METRIC_LAMPORTS),
+        "metrics must define `{PHASE4_DIVERGENCE_METRIC_LAMPORTS}` per-mint gauge"
+    );
+    assert!(
+        prod.contains("line!") && prod.contains(PHASE4_DIVERGENCE_METRIC_TOTAL),
+        "metrics render must expose `{PHASE4_DIVERGENCE_METRIC_TOTAL}` via line! (Prometheus text)"
     );
 }

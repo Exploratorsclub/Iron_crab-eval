@@ -289,15 +289,15 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 ### A.48 Phase 4 Positions-Wallet SSOT (Momentum timed sync, Plan §6.3 P3)
 - **Dateien:** `tests/invariants_momentum_wallet_position_ssot.rs`, `tests/invariants_open_positions.rs` (LockManager-Erweiterung)
 - **Invariante:** `open_positions == wallet non-zero tokens` gilt erweitert um **timed sync** fuer Momentum-Strategy-SSOT: Nach confirmed BUY/SELL (ExecutionResult) darf der Strategy-Balance-SSOT nicht von einem stale `WalletBalanceSnapshot` ueberschrieben werden. Divergenz zwischen Strategy-SSOT und Wallet-Snapshot muss beobachtbar sein (Metrik).
-- **Formal (Momentum):** Confirmed `ExecutionResult` mit `fill_out`/`fill_in` → `record_confirmed_execution_token_balance` (Strategy-SSOT). `WalletBalanceSnapshot`-Handler prueft `wallet_snapshot_must_not_clobber_confirmed_balance` bevor Position/Balance mutiert wird. Bei Abweichung: `momentum_wallet_balance_divergence` > 0 (oder inkrement).
+- **Formal (Momentum):** Confirmed `ExecutionResult` mit `fill_out`/`fill_in` setzt `token_amount` via `open_position` (`token_amount = fill_out.raw`). `WalletBalanceSnapshot`-Handler ist hint-only (`hint only; no size overwrite`); Live-Positionen werden nicht per Snapshot resized; Zero-Close nur fuer `PositionEntrySource::WalletSnapshot`. Divergenz via `record_wallet_balance_divergence_if_any` → `momentum_wallet_balance_divergence_total` / `momentum_wallet_balance_divergence_lamports{mint}`.
 - **Formal (LockManager, A.28-Regression):** `count_non_zero_token_balances()` erhoeht sich nicht bei Duplicate-/Stale-Updates auf demselben Mint (`set` + `add` auf gleichen Mint = weiterhin 1 Position bis Sell-All).
-- **Source-Contract (Sibling `Iron_crab`, grep — skip wenn Impl Phase 4 P2/P3 noch nicht gemergt):**
-  1. `momentum_bot.rs` `handle_execution_result`: confirmed-Pfad ruft `record_confirmed_execution_token_balance` und `open_position` (BUY) auf Basis von `ExecutionResult`-Fills.
-  2. `momentum_bot.rs` `MarketEventKind::WalletBalanceSnapshot`-Arm: enthaelt Guard-Marker `wallet_snapshot_must_not_clobber_confirmed_balance`.
-  3. `metrics.rs`: exportiert `momentum_wallet_balance_divergence` in Prometheus-`line!`-Output.
+- **Source-Contract (Sibling `Iron_crab` @ 7df6298 / Impl PR #243):**
+  1. `momentum_bot.rs` `handle_execution_result`: confirmed-Pfad `open_position` + `token_amount = fill_out.raw`.
+  2. `momentum_bot.rs` `MarketEventKind::WalletBalanceSnapshot`-Arm: `hint only; no size overwrite`, `balance=0 ignored for Live position`, `record_wallet_balance_divergence_if_any`.
+  3. `metrics.rs`: `momentum_wallet_balance_divergence_total` + `momentum_wallet_balance_divergence_lamports` in Prometheus-Output.
 - **Getestet:** `phase4_momentum_execution_result_mutates_balance_marker`; `phase4_momentum_wallet_balance_divergence_metric_exported`; `phase4_divergence_does_not_increment_open_positions_count`.
 - **Regression I-13:** Bestehende A.28-Tests unveraendert.
-- **Kontext:** Plan `plan_hybrid_rollback_tracking_architecture_20260623.md` Phase 4 §6.3 P3; paralleles Impl P1–P2–P4 auf `architecture-rebuild`. Eval-Gates skippen bis Sibling-Marker vorhanden (wie Phase 2b grep gates).
+- **Kontext:** Plan `plan_hybrid_rollback_tracking_architecture_20260623.md` Phase 4 §6.3 P3; Impl PR #243 auf `architecture-rebuild` (7df6298).
 
 ### A.44 PumpFun Bonding Curve Cold-Path Recovery (Force-Refresh + SLAVE-Folgezustand)
 - **Datei:** `tests/invariants_pumpfun_bonding_curve_recovery.rs`
