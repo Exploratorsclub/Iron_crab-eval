@@ -20,12 +20,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use bytes::Bytes;
 use futures::StreamExt;
-use ironcrab::ipc::{MarketEvent, MarketEventKind};
+use ironcrab::ipc::{
+    DecisionRecord, MarketEvent, MarketEventKind, PoolCacheUpdate, PoolCacheUpdateType, TradeIntent,
+};
 use ironcrab::nats::ensure_wallet_snapshot_stream;
-use ironcrab::nats::topics::wallet_snapshot_subject;
-use ironcrab::nats::WALLET_SNAPSHOT_STREAM_NAME;
+use ironcrab::nats::topics::{
+    wallet_snapshot_subject, TOPIC_DECISION_RECORDS, TOPIC_TRADE_INTENTS,
+};
+use ironcrab::nats::{
+    ensure_pool_cache_stream, ensure_trade_intents_stream, pool_subject, TRADE_INTENTS_STREAM_NAME,
+    WALLET_SNAPSHOT_STREAM_NAME,
+};
 use solana_sdk::signer::keypair::Keypair;
 use solana_sdk::signer::EncodableKey;
 use solana_sdk::signer::Signer;
@@ -76,6 +86,19 @@ const E2E_DIAG_MAX_FILES_PER_TREE: usize = 12;
 /// `balance_raw=0` im LockManager bleiben (SIM_INSUFFICIENT_BALANCE).
 const WALLET_SNAPSHOT_JS_VISIBLE_TIMEOUT_SECS: u64 = 10;
 const WALLET_SNAPSHOT_JS_VISIBLE_POLL_MS: u64 = 100;
+
+/// SLO: Intent-Header (`RecordHeader.ts_unix_ms`) → EE `process_intent`-Eintritt (Supervisor-Handoff).
+pub const INTENT_DELIVERY_SLO_MS: u64 = 250;
+
+/// Prod-aehnliche JetStream-Nebenlast fuer EE `interval.tick` (Wallet max 500 + Pool max 100).
+pub const LOAD_WALLET_SNAPSHOTS_PER_SEC: u64 = 500;
+pub const LOAD_POOL_CACHE_UPDATES_PER_SEC: u64 = 100;
+
+/// Ramp-up vor Intent-Injektion unter Last (ms).
+const LOAD_GENERATOR_WARMUP_MS: u64 = 1500;
+
+/// Timeout auf DecisionRecord nach Intent-Publish (ms).
+const INTENT_DECISION_RECORD_TIMEOUT_MS: u64 = 15_000;
 
 /// Sucht das vorab gebaute Binary (reduziert Startlatenz vs. cargo run).
 fn find_binary(name: &str) -> Option<PathBuf> {
@@ -730,6 +753,317 @@ pub async fn wait_until_wallet_snapshot_visible_in_jetstream(
         subject,
         last
     ))
+}
+
+/// Aktuelle Unix-Zeit in Millisekunden (Blackbox-Hilfe fuer Intent-Header-Timestamps).
+#[allow(dead_code)]
+pub fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_millis() as u64
+}
+
+/// JetStream: `PoolCacheUpdate` auf `ironcrab.pool_cache.{pool_address}` mit Pub-Ack-Await.
+#[allow(dead_code)]
+pub async fn publish_pool_cache_update_jetstream(
+    nats_url: &str,
+    update: &PoolCacheUpdate,
+) -> Result<(), String> {
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (pool cache publish): {}", e))?;
+    ensure_pool_cache_stream(&client)
+        .await
+        .map_err(|e| format!("ensure_pool_cache_stream: {}", e))?;
+
+    let subject = pool_subject(&update.pool_address);
+    let json = serde_json::to_vec(update).map_err(|e| format!("serialize PoolCacheUpdate: {e}"))?;
+
+    let jetstream = async_nats::jetstream::new(client);
+    let publish_fut = jetstream
+        .publish(subject.clone(), Bytes::from(json))
+        .await
+        .map_err(|e| format!("jetstream.publish pool cache: subject={subject} err={e}"))?;
+    publish_fut.await.map_err(|e| {
+        format!("JetStream pool cache publish ack failed: subject={subject} err={e}")
+    })?;
+    Ok(())
+}
+
+/// JetStream: `TradeIntent` auf `ironcrab.v1.trade_intents` mit Pub-Ack-Await.
+#[allow(dead_code)]
+pub async fn publish_trade_intent_jetstream(
+    nats_url: &str,
+    intent: &TradeIntent,
+) -> Result<(), String> {
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (trade intent publish): {}", e))?;
+    ensure_trade_intents_stream(&client)
+        .await
+        .map_err(|e| format!("ensure_trade_intents_stream: {}", e))?;
+
+    let json = serde_json::to_vec(intent).map_err(|e| format!("serialize TradeIntent: {e}"))?;
+
+    let jetstream = async_nats::jetstream::new(client);
+    let publish_fut = jetstream
+        .publish(TOPIC_TRADE_INTENTS.to_string(), Bytes::from(json))
+        .await
+        .map_err(|e| format!("jetstream.publish trade intent: err={e}"))?;
+    publish_fut.await.map_err(|e| {
+        format!(
+            "JetStream trade intent publish ack failed on stream {TRADE_INTENTS_STREAM_NAME}: {e}"
+        )
+    })?;
+    Ok(())
+}
+
+/// Hintergrund-Last: ≥[`LOAD_WALLET_SNAPSHOTS_PER_SEC`] WalletBalanceSnapshot/s und
+/// ≥[`LOAD_POOL_CACHE_UPDATES_PER_SEC`] PoolCacheUpdate/s (JetStream Pub-Ack je Nachricht).
+pub struct JetStreamLoadGenerator {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl JetStreamLoadGenerator {
+    /// Startet Prod-aehnliche JetStream-Nebenlast in einem Hintergrund-Thread.
+    #[allow(dead_code)]
+    pub fn start(
+        nats_url: String,
+        wallet: String,
+        token_mints: Vec<String>,
+        pool_addresses: Vec<String>,
+        base_mint_for_pools: String,
+    ) -> Result<Self, String> {
+        if token_mints.is_empty() {
+            return Err("token_mints must not be empty for load generator".to_string());
+        }
+        if pool_addresses.is_empty() {
+            return Err("pool_addresses must not be empty for load generator".to_string());
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = stop.clone();
+
+        let thread = std::thread::Builder::new()
+            .name("jetstream-load-gen".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        eprintln!("JetStreamLoadGenerator runtime: {e}");
+                        return;
+                    }
+                };
+                rt.block_on(run_jetstream_load_loop(
+                    nats_url,
+                    wallet,
+                    token_mints,
+                    pool_addresses,
+                    base_mint_for_pools,
+                    stop_thread,
+                ));
+            })
+            .map_err(|e| format!("spawn load generator thread: {e}"))?;
+
+        Ok(Self {
+            stop,
+            thread: Some(thread),
+        })
+    }
+
+    /// Kurze Warm-up-Phase damit EE unter Last laeuft bevor der Intent injiziert wird.
+    #[allow(dead_code)]
+    pub fn warmup() {
+        std::thread::sleep(Duration::from_millis(LOAD_GENERATOR_WARMUP_MS));
+    }
+
+    pub fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+impl Drop for JetStreamLoadGenerator {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+async fn run_jetstream_load_loop(
+    nats_url: String,
+    wallet: String,
+    token_mints: Vec<String>,
+    pool_addresses: Vec<String>,
+    base_mint_for_pools: String,
+    stop: Arc<AtomicBool>,
+) {
+    const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
+    const SPL_TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+    let client = match async_nats::connect(&nats_url).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("load generator nats connect: {e}");
+            return;
+        }
+    };
+    if let Err(e) = ensure_wallet_snapshot_stream(&client).await {
+        eprintln!("load generator ensure_wallet_snapshot_stream: {e}");
+        return;
+    }
+    if let Err(e) = ensure_pool_cache_stream(&client).await {
+        eprintln!("load generator ensure_pool_cache_stream: {e}");
+        return;
+    }
+
+    let jetstream = async_nats::jetstream::new(client);
+    let wallet_period = Duration::from_nanos(1_000_000_000 / LOAD_WALLET_SNAPSHOTS_PER_SEC.max(1));
+    let pool_period = Duration::from_nanos(1_000_000_000 / LOAD_POOL_CACHE_UPDATES_PER_SEC.max(1));
+
+    let mut wallet_tick = tokio::time::interval(wallet_period);
+    let mut pool_tick = tokio::time::interval(pool_period);
+    wallet_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    pool_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let mut wallet_idx = 0usize;
+    let mut pool_idx = 0usize;
+    let mut seq: u64 = 0;
+
+    while !stop.load(Ordering::Relaxed) {
+        tokio::select! {
+            _ = wallet_tick.tick() => {
+                let mint = &token_mints[wallet_idx % token_mints.len()];
+                wallet_idx = wallet_idx.wrapping_add(1);
+                seq = seq.wrapping_add(1);
+                let event = MarketEvent::new(
+                    "ironcrab-eval",
+                    "load-gen",
+                    "wallet-load",
+                    format!("evt-wsnap-load-{seq}"),
+                    "eval-harness",
+                    Some(1),
+                    MarketEventKind::WalletBalanceSnapshot {
+                        mint: mint.clone(),
+                        balance_raw: 1_000_000,
+                        decimals: 6,
+                        token_program: SPL_TOKEN_PROGRAM.to_string(),
+                    },
+                );
+                let subject = wallet_snapshot_subject(&wallet, mint);
+                if let Ok(json) = serde_json::to_vec(&event) {
+                    if let Ok(fut) = jetstream.publish(subject, Bytes::from(json)).await {
+                        let _ = fut.await;
+                    }
+                }
+            }
+            _ = pool_tick.tick() => {
+                let pool_address = &pool_addresses[pool_idx % pool_addresses.len()];
+                pool_idx = pool_idx.wrapping_add(1);
+                seq = seq.wrapping_add(1);
+                let update = PoolCacheUpdate {
+                    header: ironcrab::ipc::RecordHeader::new(
+                        "ironcrab-eval",
+                        "load-gen",
+                        "pool-load",
+                    ),
+                    update_type: PoolCacheUpdateType::BalanceUpdated,
+                    pool_address: pool_address.clone(),
+                    dex: "pump_amm".to_string(),
+                    base_mint: base_mint_for_pools.clone(),
+                    quote_mint: WSOL_MINT.to_string(),
+                    base_reserve: 1_000_000_000_000,
+                    quote_reserve: 30_000_000_000,
+                    liquidity_lamports: Some(30_000_000_000),
+                    geyser_slot: seq,
+                    metadata: None,
+                };
+                let subject = pool_subject(pool_address);
+                if let Ok(json) = serde_json::to_vec(&update) {
+                    if let Ok(fut) = jetstream.publish(subject, Bytes::from(json)).await {
+                        let _ = fut.await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Pollt `TOPIC_DECISION_RECORDS` bis ein `DecisionRecord` mit passender `intent_id` erscheint.
+/// Latenz = `decision.header.ts_unix_ms - intent_header_ts_ms`.
+#[allow(dead_code)]
+pub async fn wait_for_intent_decision_latency_ms(
+    nats_url: &str,
+    intent_id: &str,
+    intent_header_ts_ms: u64,
+) -> Result<u64, String> {
+    let client = async_nats::connect(nats_url)
+        .await
+        .map_err(|e| format!("nats connect (decision poll): {}", e))?;
+    let mut sub = client
+        .subscribe(TOPIC_DECISION_RECORDS.to_string())
+        .await
+        .map_err(|e| format!("subscribe decision_records: {}", e))?;
+
+    let deadline = Instant::now() + Duration::from_millis(INTENT_DECISION_RECORD_TIMEOUT_MS);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let msg = match tokio::time::timeout(remaining, sub.next()).await {
+            Ok(Some(m)) => m,
+            Ok(None) => break,
+            Err(_) => {
+                return Err(format!(
+                    "timeout: kein DecisionRecord fuer intent_id={intent_id} nach {}ms",
+                    INTENT_DECISION_RECORD_TIMEOUT_MS
+                ));
+            }
+        };
+
+        let payload = msg.payload.as_ref();
+        let Ok(record) = serde_json::from_slice::<DecisionRecord>(payload) else {
+            let lossy = String::from_utf8_lossy(payload);
+            if lossy.contains(intent_id) {
+                return Err(format!(
+                    "DecisionRecord mit intent_id-Substring aber JSON-Parse fehlgeschlagen"
+                ));
+            }
+            continue;
+        };
+
+        if record.intent_id != intent_id {
+            continue;
+        }
+
+        let latency_ms = record.header.ts_unix_ms.saturating_sub(intent_header_ts_ms);
+        return Ok(latency_ms);
+    }
+
+    Err(format!(
+        "timeout: kein DecisionRecord fuer intent_id={intent_id} nach {}ms",
+        INTENT_DECISION_RECORD_TIMEOUT_MS
+    ))
+}
+
+/// Optional: Prometheus-Histogramm `execution_intent_header_to_receive_ms` vom EE-Metrics-Port.
+#[allow(dead_code)]
+pub fn probe_execution_intent_header_to_receive_ms(metrics_port: u16) -> Result<String, String> {
+    let url = format!("http://127.0.0.1:{metrics_port}/metrics");
+    let body = reqwest::blocking::get(&url)
+        .map_err(|e| format!("GET /metrics: {e}"))?
+        .text()
+        .map_err(|e| format!("/metrics text: {e}"))?;
+    let mut lines: Vec<&str> = body
+        .lines()
+        .filter(|l| l.contains("execution_intent_header_to_receive_ms"))
+        .collect();
+    if lines.is_empty() {
+        return Err("execution_intent_header_to_receive_ms nicht in /metrics gefunden".to_string());
+    }
+    lines.sort();
+    Ok(lines.join("\n"))
 }
 
 /// Wartet gebunden auf /status (HTTP 200). Bei Timeout: diagnostische Infos.
