@@ -414,7 +414,7 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
 
 ### A.48 Arb Quote Contract (Profit-First 2-hop / Multi-hop)
-- **Datei:** `tests/invariants_arb_quote_contract.rs` (E-ARB-1 + E-ARB-2)
+- **Datei:** `tests/invariants_arb_quote_contract.rs` (E-ARB-1 + E-ARB-2), `tests/invariants_arb_multi_hop_pool_quote.rs` (E-ARB-3 / M3)
 - **Spec:** `docs/spec/ARB_QUOTE_CONTRACT.md`, Plan `docs/plans/plan_arb_profit_first_rebuild.md`
 - **Invarianten:**
   1. **QuoteKind-Pairing:** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit gleichem `QuoteKind` (`ExecutableMarginal` oder `LastTradeMid`). Kein Pairing unterschiedlicher Kinds.
