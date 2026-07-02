@@ -1,17 +1,21 @@
-//! Invariante A.48 (M1 / E-ARB-1): Arb Quote Contract — `pool_quote` public API.
+//! Invariante A.48 (E-ARB-1 + E-ARB-2): Arb Quote Contract — `pool_quote` public API + v2 structural gate.
 //!
 //! 1. **QuoteKind-Pairing:** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit gleichem `QuoteKind`.
-//! 2. **Round-Trip-Screening:** (E-ARB-2 / M2) SOL→Token→SOL, nicht Mid-Spread.
-//! 3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL.
+//! 2. **Round-Trip-Screening:** 2-hop v2 Profit aus SOL→Token→SOL, nicht Mid-Spread Reserve vs Trade.
+//! 3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL (`state_fingerprint` fuer ExecutableMarginal).
 //! 4. **Unified Quoter:** `pool_quote` exportiert aus `ironcrab::arbitrage`.
 //!
-//! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; keine `Iron_crab/src/`; API-Grenze only.
+//! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; keine Aenderung an `Iron_crab/src/`;
+//! Blackbox API + dokumentierte Source-Grep-Gates (wie `invariants_arb_track_requests.rs`).
 
 use ironcrab::arbitrage::pool_quote::{
-    quote_exact_in, quotes_pairable, PoolQuote, QuoteKind, QuotePoolInput, QuoteSide,
-    QuoteVaultInput, DLMM_PROBE_SOL_LAMPORTS, NATIVE_SOL_MINT,
+    quote_exact_in, quotes_pairable, round_trip_profit_lamports, PoolQuote, QuoteKind,
+    QuotePoolInput, QuoteSide, QuoteVaultInput, RoundTripLeg, DLMM_PROBE_SOL_LAMPORTS,
+    NATIVE_SOL_MINT,
 };
 use rust_decimal::Decimal;
+use std::fs;
+use std::path::PathBuf;
 use std::time::Instant;
 
 fn sample_pool(dex: &str, address: &str) -> QuotePoolInput {
@@ -40,6 +44,79 @@ fn sample_vault(token_reserve: u64, sol_reserve: u64) -> QuoteVaultInput {
     }
 }
 
+fn iron_crab_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("parent of manifest")
+        .join("Iron_crab")
+}
+
+fn iron_crab_bin_rs(name: &str) -> PathBuf {
+    iron_crab_root()
+        .join("src")
+        .join("bin")
+        .join(format!("{name}.rs"))
+}
+
+fn skip_if_no_sibling_iron_crab() -> Option<PathBuf> {
+    let path = iron_crab_bin_rs("arb_strategy");
+    if !path.is_file() {
+        eprintln!(
+            "SKIP: Iron_crab Sibling-Checkout fehlt oder arb_strategy.rs nicht lesbar unter {:?}",
+            iron_crab_root()
+        );
+        return None;
+    }
+    Some(iron_crab_root())
+}
+
+fn read_bin_source(name: &str) -> String {
+    let path = iron_crab_bin_rs(name);
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
+/// Production code only — test modules in the same file must not affect grep gates.
+fn production_bin_source(source: &str) -> &str {
+    if let Some(idx) = source.find("#[cfg(test)]\nmod ") {
+        return &source[..idx];
+    }
+    source
+        .split("#[cfg(test)]")
+        .next()
+        .expect("production source section")
+}
+
+/// Extrahiert den Rust-Funktionsblock ab `fn {name}(…)` inkl. geschweifter Klammern.
+fn extract_fn_block(source: &str, fn_name: &str) -> String {
+    let needle = format!("fn {fn_name}(");
+    let start = source
+        .find(&needle)
+        .unwrap_or_else(|| panic!("expected fn {fn_name}( in arb_strategy.rs"));
+    let brace_start = source[start..]
+        .find('{')
+        .map(|i| start + i)
+        .expect("expected opening brace for fn block");
+    let mut depth = 0usize;
+    let mut end = brace_start;
+    for (offset, ch) in source[brace_start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = brace_start + offset + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(end > brace_start, "unclosed fn block for {fn_name}");
+    source[start..end].to_string()
+}
+
+// --- E-ARB-1 (M1) ---
+
 #[test]
 fn quote_kind_pairing_rejects_cross_kind() {
     let exec_quote = PoolQuote {
@@ -50,6 +127,7 @@ fn quote_kind_pairing_rejects_cross_kind() {
         as_of_slot: 1,
         as_of_ts: Instant::now(),
         fresh: true,
+        state_fingerprint: 0,
         amount_in: 10_000_000,
         amount_out: 50_000,
     };
@@ -160,5 +238,96 @@ fn dlmm_quote_requires_bins() {
     }
 }
 
-// E-ARB-2 (M2): `two_hop_v2_no_legacy_mid_spread_path_when_enabled`, `round_trip_profit_formula`
-// — ausstehend bis Impl M2 (PR nach I-ARB-4..7) gemergt; siehe handoff_eval_arb_quote_m1_m2.md
+// --- E-ARB-2 (M2) ---
+
+/// A.48 Round-Trip-Screening: profit = sol_back - probe - fees (fixture pools, kein RPC).
+#[test]
+fn round_trip_profit_formula() {
+    let pool_buy = sample_pool("orca", "round_trip_buy");
+    let pool_sell = sample_pool("pump_amm", "round_trip_sell");
+    let vault_buy = sample_vault(1_000_000_000_000, 900_000_000);
+    let vault_sell = sample_vault(1_000_000_000_000, 1_100_000_000);
+
+    let buy_leg = RoundTripLeg {
+        pool: &pool_buy,
+        vault: Some(&vault_buy),
+        dlmm_bins: None,
+    };
+    let sell_leg = RoundTripLeg {
+        pool: &pool_sell,
+        vault: Some(&vault_sell),
+        dlmm_bins: None,
+    };
+
+    let probe = DLMM_PROBE_SOL_LAMPORTS;
+    let tx_cost = 0u64;
+    let profit =
+        round_trip_profit_lamports(&buy_leg, &sell_leg, probe, tx_cost).expect("round-trip quote");
+
+    assert!(
+        profit > 0,
+        "A.48: SOL→Token→SOL Round-Trip muss positiven Profit liefern (profit={profit}, probe={probe})"
+    );
+
+    let buy_quote = quote_exact_in(
+        &pool_buy,
+        Some(&vault_buy),
+        None,
+        NATIVE_SOL_MINT,
+        &pool_buy.token_mint,
+        probe,
+    )
+    .expect("buy leg");
+    let sell_quote = quote_exact_in(
+        &pool_sell,
+        Some(&vault_sell),
+        None,
+        &pool_sell.token_mint,
+        NATIVE_SOL_MINT,
+        buy_quote.amount_out,
+    )
+    .expect("sell leg");
+    let expected = sell_quote.amount_out as i64 - probe as i64 - tx_cost as i64;
+    assert_eq!(
+        profit, expected,
+        "round_trip_profit_lamports muss sol_back - probe - fees sein"
+    );
+    assert_eq!(
+        buy_quote.kind, sell_quote.kind,
+        "A.48 QuoteKind-Pairing: buy/sell muessen gleichen QuoteKind haben"
+    );
+}
+
+/// A.48 v2-Pfad: bei `arb_two_hop_v2_enabled` keine `comparable_price`-Opportunity-Entscheid.
+#[test]
+fn two_hop_v2_no_legacy_mid_spread_path_when_enabled() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+
+    if !prod.contains("fn check_arbitrage_v2") {
+        eprintln!("SKIP: M2 check_arbitrage_v2 not present in sibling arb_strategy.rs");
+        return;
+    }
+
+    let v2_body = extract_fn_block(prod, "check_arbitrage_v2");
+    assert!(
+        !v2_body.contains("comparable_price_sol_per_token"),
+        "check_arbitrage_v2 darf comparable_price_sol_per_token nicht fuer Opportunity-Entscheid nutzen (A.48)"
+    );
+    assert!(
+        v2_body.contains("select_round_trip_pools")
+            || v2_body.contains("round_trip")
+            || v2_body.contains("sell_quote.amount_out"),
+        "check_arbitrage_v2 muss Round-Trip-Quotes nutzen"
+    );
+
+    let check_body = extract_fn_block(prod, "check_arbitrage");
+    assert!(
+        check_body.contains("arb_two_hop_v2_enabled") && check_body.contains("check_arbitrage_v2"),
+        "check_arbitrage muss bei arb_two_hop_v2_enabled an check_arbitrage_v2 delegieren"
+    );
+}
