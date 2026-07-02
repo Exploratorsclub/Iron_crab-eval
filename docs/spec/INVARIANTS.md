@@ -413,6 +413,16 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Invariante:** Wenn der LivePoolCache die Pool-Adresse fuer eine base_mint kennt, muss der Recovery-/Discovery-Pfad den bekannten Pool gezielt behandeln. Globaler Scan ist nur Last-Resort fuer komplett unbekannte Pools.
 - **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
 
+### A.48 Arb Quote Contract (Profit-First 2-hop / Multi-hop)
+- **Datei:** `tests/invariants_arb_quote_contract.rs` (ab Milestone M1/M2)
+- **Spec:** `docs/spec/ARB_QUOTE_CONTRACT.md`, Plan `docs/plans/plan_arb_profit_first_rebuild.md`
+- **Invarianten:**
+  1. **QuoteKind-Pairing:** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit gleichem `QuoteKind` (`ExecutableMarginal` oder `LastTradeMid`). Kein Pairing unterschiedlicher Kinds.
+  2. **Round-Trip-Screening:** 2-hop v2 Profit wird aus `SOL → Token → SOL` bei konfigurierter Probe-Size abgeleitet, nicht aus Mid-Spread zwischen Reserve- und Trade-Preisen.
+  3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL (Trade vs. unveraenderter State), nicht lose „irgendein Event ≤30s“.
+  4. **Unified Quoter:** Multi-hop und 2-hop nutzen dieselbe `pool_quote`-Implementierung (ab M3 voll eval-enforced; ab M2 fuer 2-hop).
+- **Formal:** `buy.kind == sell.kind` und `profit = sol_back - probe - fees`; Reject `incompatible_quote_kind` statt Legacy `spread_too_large` auf Mid-Mix.
+
 ### A.37-A.40 zurueckgezogen
 - Die zuvor vorgeschlagenen Invarianten A.37-A.40 wurden **nicht** als aktive Eval-Invarianten uebernommen.
 - Grund: Der dazu erstellte Testansatz basierte ueberwiegend auf Source-Code-Scans und Regex-/String-Matching gegen das Impl-Repo statt auf belastbaren Verhaltens- oder Blackbox-Tests.
