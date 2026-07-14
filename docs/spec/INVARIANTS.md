@@ -315,6 +315,14 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Scope:** Raydium, RaydiumCpmm, MeteoraDlmm, Orca Whirlpool (Reserve-Fallback-Slice ueber `quote_exact_in` bzw. Raydium `fetch_and_update_reserves`). Hot Path bleibt GEYSER-ONLY (A.12). Kein Overclaim ueber Request/Reply, PumpFun oder komplettes Orca-IX-Layout.
 - **Kontext:** I-5/I-6 Cold-Path-Leitlinie; A.12 Gegenkontext (Hot Path RPC-frei).
 
+### A.49 Market-Data Hard Admission Cap + Priority/LRU (I-MD-7, I-MD-8)
+- **Datei:** `tests/invariants_md_hard_admission_cap_priority.rs`
+- **API-Grenze (Blackbox):** `ironcrab::market_data::track::{FixedCapAdmission, try_admit_owner_group, admitted_pubkey_set, apply_cap_shrink, restore_admission_from_owner_groups, ExplicitOwnership, ExplicitConsumer, ExplicitOwner}` — physisches Geyser-Explicit-Subscription-Set unter festem Cap (post-4c / Impl PR #296).
+- **Invariante I-MD-7:** Zu jedem beobachtbaren Zeitpunkt gilt `len(FixedCapAdmission) <= cap`. Owner-Gruppen (Pool-Account-Gruppen) werden atomar via `try_admit_owner_group` aufgenommen oder abgelehnt; abgelehnte Gruppe laesst `admitted_pubkey_set()` unveraendert.
+- **Invariante I-MD-8:** Schutzreihenfolge `Wallet > Momentum > Arb > Tracker` (`PinPriority` / `select_eviction_victims`). Wallet wird unter Cap-Druck nicht verdraengt (`plan_admit_with_eviction`, `apply_cap_shrink`). Geteilte Pubkeys tragen Owner-Referenzen (`owner_refcount`). Wallet-only over-cap → fail-closed (`AdmissionRestoreResult::ProtectedOverflow`, `CapShrinkResult::ProtectedOverflow`).
+- **Getestet:** `i_md_7_arbitrary_sequences_never_exceed_cap`; `i_md_7_rejected_pool_group_leaves_snapshot_unchanged`; `i_md_7_dedup_set_single_physical_pubkey_per_key`; `i_md_8_wallet_never_evicted_under_cap_pressure`; `i_md_8_priority_momentum_over_arb_tracker`; `i_md_8_shared_pubkey_owner_references`; `i_md_8_wallet_only_over_cap_fail_closed`; `i_md_7_restore_after_oversubscribed_converges_or_fail_closed`; `i_md_8_pin_priority_ordering_contract`; `i_md_8_eviction_planner_wallet_never_victim_when_alternatives_exist`.
+- **Kontext:** Impl PR #296 (4c) / `FixedCapAdmission` SSOT; ersetzt `DesiredExplicitSet` (A.45 Phase 2a Ergaenzung).
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
