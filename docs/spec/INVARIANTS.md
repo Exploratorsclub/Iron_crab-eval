@@ -315,6 +315,14 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Scope:** Raydium, RaydiumCpmm, MeteoraDlmm, Orca Whirlpool (Reserve-Fallback-Slice ueber `quote_exact_in` bzw. Raydium `fetch_and_update_reserves`). Hot Path bleibt GEYSER-ONLY (A.12). Kein Overclaim ueber Request/Reply, PumpFun oder komplettes Orca-IX-Layout.
 - **Kontext:** I-5/I-6 Cold-Path-Leitlinie; A.12 Gegenkontext (Hot Path RPC-frei).
 
+### A.49 Market-Data Hard Admission Cap + Priority/LRU (I-MD-7, I-MD-8)
+- **Datei:** `tests/invariants_md_hard_admission_cap_priority.rs`
+- **API-Grenze (Blackbox):** `ironcrab::market_data::track::{DesiredExplicitSet, ConsumerId, PinPriority}` — dedupliziertes physisches Geyser-Explicit-Subscription-Set.
+- **Invariante I-MD-7:** Zu jedem beobachtbaren Zeitpunkt gilt `len(DesiredExplicitSet) <= max_explicit_pubkeys`. Admission erfolgt vor Mutation des publizierten Snapshots; Pool-Account-Gruppen werden atomar aufgenommen oder abgelehnt (abgelehnte Gruppe laesst `snapshot_pubkeys()` unveraendert).
+- **Invariante I-MD-8:** Schutzreihenfolge `Wallet > Momentum > Arb > Tracker` (`PinPriority`). Wallet wird unter Cap-Druck nicht verdraengt. Geteilte Pubkeys tragen Consumer-Owner-Referenzen (`consumers_of`). Wallet-only over-cap → fail-closed (`insert` liefert `false`, kein stilles Ueberlaufen).
+- **Getestet:** `i_md_7_arbitrary_sequences_never_exceed_cap`; `i_md_7_rejected_pool_group_leaves_snapshot_unchanged`; `i_md_7_dedup_set_single_physical_pubkey_per_key`; `i_md_8_wallet_never_evicted_under_cap_pressure`; `i_md_8_priority_momentum_over_arb_tracker`; `i_md_8_shared_pubkey_owner_references`; `i_md_8_wallet_only_over_cap_fail_closed`; `i_md_7_restore_after_oversubscribed_converges_or_fail_closed`; `i_md_8_pin_priority_ordering_contract`.
+- **Kontext:** Impl PR 4c / `DesiredExplicitSet` SSOT auf `md-track-worker` (ergaenzt A.45 Phase 2a).
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
