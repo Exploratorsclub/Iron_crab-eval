@@ -2258,7 +2258,7 @@ dependencies = [
 [[package]]
 name = "ironcrab"
 version = "0.4.0"
-source = "git+https://github.com/Exploratorsclub/Iron_crab.git?rev=02b2ce1#02b2ce1cf30a8f955278e303b418a3a3141876d3"
+source = "git+https://github.com/Exploratorsclub/Iron_crab.git?rev=b0e551d#b0e551dfd943a719983f19242d26e3b28b800ca8"
 dependencies = [
  "anyhow",
  "arc-swap",
