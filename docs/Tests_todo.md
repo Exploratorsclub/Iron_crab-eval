@@ -154,7 +154,26 @@ Für jeden neuen Eval-Test:
 
 ---
 
-## 6. Querbezüge
+## 8. L2c — Momentum Imminent-Entry (I-MD-9) — OFFEN
+
+**Spec:** `docs/spec/MOMENTUM_ACTIVE_POOLS.md`, `INVARIANTS.md` A.50  
+**Plan:** `docs/plans/plan_realtime_slo_processable_set_20260725.md` §3.5  
+**Impl-Scope:** L2c-Mom (danach optional Eval-Gates)
+
+**Gewünschte Tests (nach Impl, Test Authority):**
+
+1. Source-/Publish-Vertrag: Pin-Publish (`TOPIC_MOMENTUM_ACTIVE_POOLS` / `active` mit `pin_reason: tracker`) **nicht** allein bei Tracker-Create / Discovery.  
+2. Verhaltensvertrag: Intent ProbeBuy/ScaleIn nur nach Hot-Set-Frische **und** Pre-Intent-Filter-Revalidate; kein Blind-Fire nach initialem Filter-Pass.  
+3. `WaitHotSet`: Filter-rot oder Timeout → Unpin / `removed` (`filter_failed` / `hot_set_timeout`), kein Intent.  
+4. Open-Position `pin_reason: position` bleibt Must-hot (Regression gegen Shed).
+
+**Zieldatei (Vorschlag):** `tests/invariants_momentum_imminent_entry.rs` (oder Erweiterung bestehender Momentum-Active-Pools-Gates).
+
+**Prüf-Befehle (Eval-Repo „Rust“-Workflow):** `cargo fmt -p ironcrab-eval -- --check`, `cargo check`/`cargo build`, `cargo clippy -p ironcrab-eval` (ohne `--all-targets`). Volle Suite via Impl Eval Level 5 / manuell.
+
+---
+
+## 9. Querbezüge
 
 - **EVAL_TEST_CANDIDATES.md** – Vollständige Kandidaten-Liste
 - **ARCHITECTURE_AUDIT.md** (Iron_crab) – Offene Architektur-Themen, BUG A
