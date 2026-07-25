@@ -321,7 +321,15 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Invariante I-MD-7:** Zu jedem beobachtbaren Zeitpunkt gilt `len(FixedCapAdmission) <= cap`. Owner-Gruppen (Pool-Account-Gruppen) werden atomar via `try_admit_owner_group` aufgenommen oder abgelehnt; abgelehnte Gruppe laesst `admitted_pubkey_set()` unveraendert.
 - **Invariante I-MD-8:** Schutzreihenfolge `Wallet > Momentum > Arb > Tracker` (`PinPriority` / `select_eviction_victims`). Wallet wird unter Cap-Druck nicht verdraengt (`plan_admit_with_eviction`, `apply_cap_shrink`). Geteilte Pubkeys tragen Owner-Referenzen (`owner_refcount`). Wallet-only over-cap → fail-closed (`AdmissionRestoreResult::ProtectedOverflow`, `CapShrinkResult::ProtectedOverflow`).
 - **Getestet:** `i_md_7_arbitrary_sequences_never_exceed_cap`; `i_md_7_rejected_pool_group_leaves_snapshot_unchanged`; `i_md_7_dedup_set_single_physical_pubkey_per_key`; `i_md_8_wallet_never_evicted_under_cap_pressure`; `i_md_8_priority_momentum_over_arb_tracker`; `i_md_8_shared_pubkey_owner_references`; `i_md_8_wallet_only_over_cap_fail_closed`; `i_md_7_restore_after_oversubscribed_converges_or_fail_closed`; `i_md_8_pin_priority_ordering_contract`; `i_md_8_eviction_planner_wallet_never_victim_when_alternatives_exist`.
-- **Kontext:** Impl PR #296 (4c) / `FixedCapAdmission` SSOT; ersetzt `DesiredExplicitSet` (A.45 Phase 2a Ergaenzung).
+  - **Kontext:** Impl PR #296 (4c) / `FixedCapAdmission` SSOT; ersetzt `DesiredExplicitSet` (A.45 Phase 2a Ergaenzung).
+
+### A.50 Momentum Imminent-Entry Pins (I-MD-9)
+
+- **Spec:** `docs/spec/MOMENTUM_ACTIVE_POOLS.md` · Plan `docs/plans/plan_realtime_slo_processable_set_20260725.md` §3.5
+- **Invariante I-MD-9:** Momentum darf Geyser-Pins (`ironcrab.v1.momentum.active_pools`) **nicht** allein wegen Discovery / `get_or_create_tracker` setzen. Pin (`pin_reason: tracker`) erst nach **initialem Pre-Entry-Filter-Pass** (Imminent / `WaitHotSet`). ProbeBuy-/ScaleIn-Intent nur wenn **(a)** Hot-Set / Vault-Reserves fresh genug **und** **(b)** Pre-Entry-Filter **unmittelbar vor** Intent-Emit erneut gruen sind — **kein Blind-Intent**. Waehrend `WaitHotSet` laufen dieselben Pre-Entry-Gates weiter; bei Filter-rot oder Timeout → Unpin, kein Intent. `pin_reason: position` (Open Position) und Wallet sind Must-hot.
+- **Wire:** `removed.reason` darf `hot_set_timeout` / `filter_failed` tragen (siehe Spec).
+- **Getestet:** (Eval nach L2c-Mom) Source-/Verhaltensvertrag — kein Pin-Publish auf reinem Tracker-Create; Intent-Pfad erfordert Revalidate+Freshness; siehe `Tests_todo.md` L2c.
+- **Kontext:** Prod EXEC_HOT Lag trotz L1/L2b — fruehe Tracker-Pins (~2k) blaehten das Explicit-Set; bewusster Tradeoff Entry-Latenz vs Exit-/Quote-Frische.
 
 ---
 
