@@ -331,6 +331,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Getestet:** (Eval nach L2c-Mom) Source-/Verhaltensvertrag — kein Pin-Publish auf reinem Tracker-Create; Intent-Pfad erfordert Revalidate+Freshness; siehe `Tests_todo.md` L2c.
 - **Kontext:** Prod EXEC_HOT Lag trotz L1/L2b — fruehe Tracker-Pins (~2k) blaehten das Explicit-Set; bewusster Tradeoff Entry-Latenz vs Exit-/Quote-Frische.
 
+### A.51 Explicit subs only via Track-Requests (I-MD-5 TX-Tracker ban, I-MD-6 snapshot scope)
+- **Datei:** `tests/invariants_md_explicit_track_requests_only.rs`
+- **Invariante:** Kein TX-Ingest TrackMint; Snapshot persist/restore ohne ExplicitConsumer::Tracker.
+- **Getestet:** `tx_ingest_no_track_mint_enqueue`; `i_md_6_snapshot_persist_excludes_tracker`; `i_md_6_snapshot_restore_strips_legacy_tracker`; `i_md_5_unpinned_track_mint_no_admission`.
+- **Kontext:** Prod ~99k subs aus TX-Tracker + snapshot restore; Fix Impl PR TBD.
+
 ---
 
 ## B. Architektur-Invarianten (Leitlinien, kein Eval-Test)
