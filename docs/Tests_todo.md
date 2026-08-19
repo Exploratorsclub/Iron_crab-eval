@@ -104,6 +104,7 @@ Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind
 | 13 | PumpFun Market Order (A.25-A.26) | P0 | `invariants_pumpfun_market_order.rs` | erledigt |
 | 14 | PumpSwap Recovery-Semantik: Cold-Path force refresh, Hot-Path nicht blockieren | P0 | neue/erweiterte PumpSwap/Liquidation Invarianten | erledigt (Impl Scope 1-3 gemergt, Eval-Vertrag in PR #13 gemergt) |
 | 15 | Trailing Session High / quote-first STOP (I-13/I-14 Policy, PR #148) | P1 | `invariants_trailing_session_high.rs` | erledigt |
+| 16 | I-MD-5 TX-Tracker ban + I-MD-6 Snapshot scope (A.51) | P1 | `invariants_md_explicit_track_requests_only.rs` | erledigt |
 
 ---
 
@@ -173,7 +174,21 @@ Für jeden neuen Eval-Test:
 
 ---
 
-## 9. Querbezüge
+## 9. A.51 — I-MD-5 TX-Tracker ban + I-MD-6 Snapshot scope — ERLEDIGT
+
+**Spec:** `INVARIANTS.md` A.51  
+**Datei:** `tests/invariants_md_explicit_track_requests_only.rs`
+
+**Getestet:**
+- TX-Pfad: kein `MdStateCommand::TrackMint` in `tx_handler.rs` (`tx_ingest_no_track_mint_enqueue`); `pool_mint_map` Sidefx bleibt erlaubt (`tx_ingest_pool_mint_map_sidefx_unchanged`).
+- Snapshot persist/restore ohne `ExplicitConsumer::Tracker` (`i_md_6_snapshot_persist_excludes_tracker`, `i_md_6_snapshot_restore_strips_legacy_tracker`).
+- Unpinned `TrackMint` ohne Tracker-Explicit-Admission (`i_md_5_unpinned_track_mint_no_admission`).
+
+**Prüf-Befehle:** `cargo fmt -p ironcrab-eval -- --check`, `cargo check`, `cargo clippy -p ironcrab-eval`, `cargo test`. Volle Suite mit Sibling `Iron_crab` auf Impl-Branch nach Impl-Merge (Level 5).
+
+---
+
+## 10. Querbezüge
 
 - **EVAL_TEST_CANDIDATES.md** – Vollständige Kandidaten-Liste
 - **ARCHITECTURE_AUDIT.md** (Iron_crab) – Offene Architektur-Themen, BUG A
