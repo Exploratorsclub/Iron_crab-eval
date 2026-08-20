@@ -992,27 +992,27 @@ async fn run_jetstream_load_loop(
     }
 }
 
-/// Subscribiert zuerst auf `TOPIC_DECISION_RECORDS`, publiziert dann den Intent per JetStream
-/// und pollt bis ein `DecisionRecord` mit passender `intent_id` erscheint.
-/// Latenz = `decision.header.ts_unix_ms - intent_header_ts_ms`.
+/// Subscribes to `TOPIC_DECISION_RECORDS`. Muss **vor** Intent-Publish stehen: Core NATS hat
+/// kein Replay — bei schnellem EE (<250 ms) geht ein frueh gesendeter DecisionRecord sonst verloren.
 #[allow(dead_code)]
-pub async fn wait_for_intent_decision_latency_ms(
-    nats_url: &str,
-    intent: &TradeIntent,
-    intent_header_ts_ms: u64,
-) -> Result<u64, String> {
-    let intent_id = &intent.intent_id;
-
+pub async fn subscribe_decision_records(nats_url: &str) -> Result<async_nats::Subscriber, String> {
     let client = async_nats::connect(nats_url)
         .await
-        .map_err(|e| format!("nats connect (decision poll): {}", e))?;
-    let mut sub = client
+        .map_err(|e| format!("nats connect (decision subscribe): {}", e))?;
+    client
         .subscribe(TOPIC_DECISION_RECORDS.to_string())
         .await
-        .map_err(|e| format!("subscribe decision_records: {}", e))?;
+        .map_err(|e| format!("subscribe decision_records: {}", e))
+}
 
-    publish_trade_intent_jetstream(nats_url, intent).await?;
-
+/// Wartet auf `DecisionRecord` mit passender `intent_id` auf einer bereits aktiven Subscription.
+/// Latenz = `decision.header.ts_unix_ms - intent_header_ts_ms`.
+#[allow(dead_code)]
+pub async fn wait_for_intent_decision_latency_on_subscriber(
+    sub: &mut async_nats::Subscriber,
+    intent_id: &str,
+    intent_header_ts_ms: u64,
+) -> Result<u64, String> {
     let deadline = Instant::now() + Duration::from_millis(INTENT_DECISION_RECORD_TIMEOUT_MS);
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -1031,14 +1031,15 @@ pub async fn wait_for_intent_decision_latency_ms(
         let Ok(record) = serde_json::from_slice::<DecisionRecord>(payload) else {
             let lossy = String::from_utf8_lossy(payload);
             if lossy.contains(intent_id) {
-                return Err(format!(
+                return Err(
                     "DecisionRecord mit intent_id-Substring aber JSON-Parse fehlgeschlagen"
-                ));
+                        .to_string(),
+                );
             }
             continue;
         };
 
-        if record.intent_id != *intent_id {
+        if record.intent_id != intent_id {
             continue;
         }
 
@@ -1050,6 +1051,21 @@ pub async fn wait_for_intent_decision_latency_ms(
         "timeout: kein DecisionRecord fuer intent_id={intent_id} nach {}ms",
         INTENT_DECISION_RECORD_TIMEOUT_MS
     ))
+}
+
+/// Subscribiert zuerst auf `TOPIC_DECISION_RECORDS`, publiziert dann den Intent per JetStream
+/// und pollt bis ein `DecisionRecord` mit passender `intent_id` erscheint.
+/// Latenz = `decision.header.ts_unix_ms - intent_header_ts_ms`.
+#[allow(dead_code)]
+pub async fn wait_for_intent_decision_latency_ms(
+    nats_url: &str,
+    intent: &TradeIntent,
+    intent_header_ts_ms: u64,
+) -> Result<u64, String> {
+    let mut sub = subscribe_decision_records(nats_url).await?;
+    publish_trade_intent_jetstream(nats_url, intent).await?;
+    wait_for_intent_decision_latency_on_subscriber(&mut sub, &intent.intent_id, intent_header_ts_ms)
+        .await
 }
 
 /// Optional: Prometheus-Histogramm `execution_intent_header_to_receive_ms` vom EE-Metrics-Port.
