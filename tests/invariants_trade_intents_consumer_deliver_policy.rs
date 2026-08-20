@@ -1,8 +1,8 @@
 //! Invariant: Der durable JetStream-Consumer fuer `TRADE_INTENTS` in der Execution Engine
 //! muss `DeliverPolicy::New` verwenden — nur Live-Intents im Hot Path, kein Replay alter Intents.
 //!
-//! Erwartung vor Impl-Fix: **rot** (aktuell `DeliverPolicy::All`, vgl. Prod-Evidenz
-//! `execution_intent_header_to_receive_ms` Ø ~4942 ms).
+//! Erwartung nach Impl #406: **gruen** (`DeliverPolicy::New`; vgl. Prod-Evidenz vor Fix:
+//! `execution_intent_header_to_receive_ms` Ø ~4942 ms mit `DeliverPolicy::All`).
 //!
 //! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; oeffentliche `ironcrab::nats`-API;
 //! keine Assertions auf private Implementierungsdetails.
