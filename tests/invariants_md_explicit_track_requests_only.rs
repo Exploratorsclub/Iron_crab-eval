@@ -80,6 +80,25 @@ fn extract_fn_block(source: &str, fn_name: &str) -> String {
     source[start..end].to_string()
 }
 
+/// Extrahiert den n-ten Funktionsblock (0-basiert) fuer doppelt definierte Trait-Delegates.
+fn extract_fn_block_nth(source: &str, fn_name: &str, occurrence: usize) -> String {
+    let needles = [format!("async fn {fn_name}"), format!("fn {fn_name}")];
+    let mut search_from = 0usize;
+    for idx in 0..=occurrence {
+        let start = needles
+            .iter()
+            .find_map(|needle| source[search_from..].find(needle).map(|i| search_from + i))
+            .unwrap_or_else(|| {
+                panic!("expected fn {fn_name} occurrence {occurrence} (found {idx}) in source")
+            });
+        if idx == occurrence {
+            return extract_fn_block(&source[start..], fn_name);
+        }
+        search_from = start + 1;
+    }
+    unreachable!("extract_fn_block_nth: occurrence {occurrence} for {fn_name}");
+}
+
 /// `MarketDataContext::apply_track_mint` impl (PR4b doc marker), not the TrackWorkerContext delegate.
 fn extract_market_data_context_apply_track_mint_impl(source: &str) -> String {
     let marker = "/// PR4b: tracker (`pin == None`)";
@@ -348,7 +367,7 @@ fn i_md_6_source_build_explicit_set_snapshot_excludes_tracker() {
         return;
     }
     let source = read_iron_crab_source("bin/market_data.rs");
-    let body = extract_fn_block(&source, "build_explicit_set_snapshot");
+    let body = extract_fn_block_nth(&source, "build_explicit_set_snapshot", 1);
     assert!(
         body.contains("snapshot_owner_groups_for_persist")
             || body.contains("snapshot_rows_for_persist"),
