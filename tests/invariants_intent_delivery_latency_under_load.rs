@@ -16,9 +16,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use common::request_reply_e2e_harness::{
-    now_unix_ms, publish_trade_intent_jetstream, seed_wallet_balance_snapshot_jetstream,
-    wait_for_intent_decision_latency_ms, wait_until_wallet_snapshot_visible_in_jetstream,
-    JetStreamLoadGenerator, RequestReplyE2eHarness, INTENT_DELIVERY_SLO_MS,
+    now_unix_ms, seed_wallet_balance_snapshot_jetstream, wait_for_intent_decision_latency_ms,
+    wait_until_wallet_snapshot_visible_in_jetstream, JetStreamLoadGenerator,
+    RequestReplyE2eHarness, INTENT_DELIVERY_SLO_MS,
 };
 use ironcrab::ipc::{
     ExplicitAmount, IntentOrigin, IntentTier, TradeIntent, TradeResources, TradeSide, TradingRegime,
@@ -179,12 +179,9 @@ fn intent_delivery_latency_under_jetstream_load_within_slo() {
     let nats_url = harness.nats_url().to_string();
     let metrics_port = harness.execution_engine_metrics_port();
 
-    rt.block_on(publish_trade_intent_jetstream(&nats_url, &intent))
-        .expect("jetstream publish trade intent");
-
     let latency_result = rt.block_on(wait_for_intent_decision_latency_ms(
         &nats_url,
-        &intent_id,
+        &intent,
         intent_header_ts_ms,
     ));
 

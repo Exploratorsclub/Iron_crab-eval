@@ -992,14 +992,17 @@ async fn run_jetstream_load_loop(
     }
 }
 
-/// Pollt `TOPIC_DECISION_RECORDS` bis ein `DecisionRecord` mit passender `intent_id` erscheint.
+/// Subscribiert zuerst auf `TOPIC_DECISION_RECORDS`, publiziert dann den Intent per JetStream
+/// und pollt bis ein `DecisionRecord` mit passender `intent_id` erscheint.
 /// Latenz = `decision.header.ts_unix_ms - intent_header_ts_ms`.
 #[allow(dead_code)]
 pub async fn wait_for_intent_decision_latency_ms(
     nats_url: &str,
-    intent_id: &str,
+    intent: &TradeIntent,
     intent_header_ts_ms: u64,
 ) -> Result<u64, String> {
+    let intent_id = &intent.intent_id;
+
     let client = async_nats::connect(nats_url)
         .await
         .map_err(|e| format!("nats connect (decision poll): {}", e))?;
@@ -1007,6 +1010,8 @@ pub async fn wait_for_intent_decision_latency_ms(
         .subscribe(TOPIC_DECISION_RECORDS.to_string())
         .await
         .map_err(|e| format!("subscribe decision_records: {}", e))?;
+
+    publish_trade_intent_jetstream(nats_url, intent).await?;
 
     let deadline = Instant::now() + Duration::from_millis(INTENT_DECISION_RECORD_TIMEOUT_MS);
     while Instant::now() < deadline {
@@ -1033,7 +1038,7 @@ pub async fn wait_for_intent_decision_latency_ms(
             continue;
         };
 
-        if record.intent_id != intent_id {
+        if record.intent_id != *intent_id {
             continue;
         }
 
