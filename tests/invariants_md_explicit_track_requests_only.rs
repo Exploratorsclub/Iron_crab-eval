@@ -13,7 +13,8 @@
 //! Lib-Assertions an oeffentlicher Track-API; Source-Grep auf dokumentierte Architektur-Strings.
 
 use ironcrab::market_data::track::{
-    owner_group_snapshot_to_disk, restore_admission_from_owner_groups, AdmissionRestoreResult,
+    filter_tracker_consumer_from_snapshot, owner_group_snapshot_to_disk,
+    restore_admission_from_owner_groups, snapshot_owner_groups_for_persist, AdmissionRestoreResult,
     ExplicitConsumer, ExplicitOwnerKey, ExplicitSetSnapshot, FixedCapAdmission, OwnerGroupSnapshot,
     SnapshotConsumer, SnapshotOwnerGroup, EXPLICIT_SET_SNAPSHOT_VERSION,
 };
@@ -79,23 +80,50 @@ fn extract_fn_block(source: &str, fn_name: &str) -> String {
     source[start..end].to_string()
 }
 
+/// Extrahiert den n-ten Funktionsblock (0-basiert) fuer doppelt definierte Trait-Delegates.
+fn extract_fn_block_nth(source: &str, fn_name: &str, occurrence: usize) -> String {
+    let needles = [format!("async fn {fn_name}"), format!("fn {fn_name}")];
+    let mut search_from = 0usize;
+    for idx in 0..=occurrence {
+        let start = needles
+            .iter()
+            .find_map(|needle| source[search_from..].find(needle).map(|i| search_from + i))
+            .unwrap_or_else(|| {
+                panic!("expected fn {fn_name} occurrence {occurrence} (found {idx}) in source")
+            });
+        if idx == occurrence {
+            return extract_fn_block(&source[start..], fn_name);
+        }
+        search_from = start + 1;
+    }
+    unreachable!("extract_fn_block_nth: occurrence {occurrence} for {fn_name}");
+}
+
+/// `MarketDataContext::apply_track_mint` impl (PR4b doc marker), not the TrackWorkerContext delegate.
+fn extract_market_data_context_apply_track_mint_impl(source: &str) -> String {
+    let marker = "/// PR4b: tracker (`pin == None`)";
+    let marker_pos = source
+        .find(marker)
+        .unwrap_or_else(|| panic!("expected PR4b apply_track_mint doc in market_data.rs"));
+    extract_fn_block(&source[marker_pos..], "apply_track_mint")
+}
+
 /// `match pin { None => { ... } }` Arm in `apply_track_mint`.
-fn extract_apply_track_mint_none_arm(source: &str) -> String {
-    let fn_body = extract_fn_block(source, "apply_track_mint");
-    let match_pin = fn_body
+fn extract_apply_track_mint_none_arm(impl_body: &str) -> String {
+    let match_pin = impl_body
         .find("match pin")
         .unwrap_or_else(|| panic!("expected `match pin` in apply_track_mint"));
-    let none_start = fn_body[match_pin..]
+    let none_start = impl_body[match_pin..]
         .find("None =>")
         .map(|i| match_pin + i)
         .unwrap_or_else(|| panic!("expected `None =>` arm in apply_track_mint"));
-    let brace_start = fn_body[none_start..]
+    let brace_start = impl_body[none_start..]
         .find('{')
         .map(|i| none_start + i)
         .expect("expected opening brace for None arm");
     let mut depth = 0usize;
     let mut end = brace_start;
-    for (offset, ch) in fn_body[brace_start..].char_indices() {
+    for (offset, ch) in impl_body[brace_start..].char_indices() {
         match ch {
             '{' => depth += 1,
             '}' => {
@@ -108,7 +136,7 @@ fn extract_apply_track_mint_none_arm(source: &str) -> String {
             _ => {}
         }
     }
-    fn_body[none_start..=end].to_string()
+    impl_body[none_start..=end].to_string()
 }
 
 fn pk(seed: u8) -> Pubkey {
@@ -174,35 +202,6 @@ fn tracker_group(mint: Pubkey) -> OwnerGroupSnapshot {
         owner_key: ExplicitOwnerKey::Mint(mint),
         pubkeys: vec![mint],
     }
-}
-
-/// I-MD-6 persist scope: Tracker owner_groups werden nicht serialisiert.
-/// Ersetzen durch `ironcrab::market_data::track::filter_owner_groups_for_snapshot_persist` nach Impl A.51.
-fn filter_owner_groups_for_snapshot_persist(
-    groups: &[OwnerGroupSnapshot],
-) -> Vec<OwnerGroupSnapshot> {
-    groups
-        .iter()
-        .filter(|g| g.consumer != ExplicitConsumer::Tracker)
-        .cloned()
-        .collect()
-}
-
-/// I-MD-6 restore scope: nur Wallet / Momentum / Arb werden re-admittiert.
-/// Ersetzen durch `ironcrab::market_data::track::filter_owner_groups_for_snapshot_restore` nach Impl A.51.
-fn filter_owner_groups_for_snapshot_restore(
-    groups: &[OwnerGroupSnapshot],
-) -> Vec<OwnerGroupSnapshot> {
-    groups
-        .iter()
-        .filter(|g| {
-            matches!(
-                g.consumer,
-                ExplicitConsumer::Wallet | ExplicitConsumer::Momentum | ExplicitConsumer::Arb
-            )
-        })
-        .cloned()
-        .collect()
 }
 
 fn count_tracker_disk_groups(groups: &[SnapshotOwnerGroup]) -> usize {
@@ -284,22 +283,15 @@ fn i_md_6_snapshot_persist_excludes_tracker() {
         arb_group(arb_pool, vec![arb_leg]),
         tracker_group(tracker_mint),
     ];
-    let filtered = filter_owner_groups_for_snapshot_persist(&groups);
+    let disk_input: Vec<SnapshotOwnerGroup> =
+        groups.iter().map(owner_group_snapshot_to_disk).collect();
+    let filtered = snapshot_owner_groups_for_persist(&disk_input);
     assert_eq!(filtered.len(), 2);
-    assert!(
-        filtered
-            .iter()
-            .all(|g| g.consumer != ExplicitConsumer::Tracker),
-        "persist scope must exclude all Tracker owner_groups"
-    );
-
-    let disk_groups: Vec<SnapshotOwnerGroup> =
-        filtered.iter().map(owner_group_snapshot_to_disk).collect();
-    assert_eq!(count_tracker_disk_groups(&disk_groups), 0);
+    assert_eq!(count_tracker_disk_groups(&filtered), 0);
 
     let mut snapshot = ExplicitSetSnapshot::new(Some("eval-a51".into()));
     snapshot.version = EXPLICIT_SET_SNAPSHOT_VERSION;
-    snapshot.owner_groups = disk_groups;
+    snapshot.owner_groups = filtered;
     assert_eq!(count_tracker_disk_groups(&snapshot.owner_groups), 0);
     assert_eq!(snapshot.owner_groups.len(), 2);
 }
@@ -348,10 +340,10 @@ fn i_md_6_snapshot_restore_strips_legacy_tracker() {
 
     let snapshot: ExplicitSetSnapshot =
         serde_json::from_str(&legacy_json).expect("parse legacy snapshot fixture");
-    let parsed_groups = snapshot.to_owner_group_snapshots();
-    assert_eq!(parsed_groups.len(), 3);
+    assert_eq!(snapshot.to_owner_group_snapshots().len(), 3);
 
-    let restore_groups = filter_owner_groups_for_snapshot_restore(&parsed_groups);
+    let filtered = filter_tracker_consumer_from_snapshot(snapshot);
+    let restore_groups = filtered.to_owner_group_snapshots();
     assert_eq!(restore_groups.len(), 2);
     assert!(restore_groups
         .iter()
@@ -375,12 +367,10 @@ fn i_md_6_source_build_explicit_set_snapshot_excludes_tracker() {
         return;
     }
     let source = read_iron_crab_source("bin/market_data.rs");
-    let body = extract_fn_block(&source, "build_explicit_set_snapshot");
+    let body = extract_fn_block_nth(&source, "build_explicit_set_snapshot", 1);
     assert!(
-        body.contains("ExplicitConsumer::Tracker")
-            || body.contains("SnapshotConsumer::Tracker")
-            || body.contains("filter_owner_groups_for_snapshot_persist")
-            || body.contains("filter_snapshot_owner_groups"),
+        body.contains("snapshot_owner_groups_for_persist")
+            || body.contains("snapshot_rows_for_persist"),
         "build_explicit_set_snapshot must exclude Tracker owner_groups from snapshot persist (I-MD-6)"
     );
 }
@@ -394,10 +384,7 @@ fn i_md_6_source_restore_explicit_admission_strips_tracker() {
     let source = read_iron_crab_source("bin/market_data.rs");
     let body = extract_fn_block(&source, "restore_explicit_admission_from_snapshot");
     assert!(
-        body.contains("filter_owner_groups_for_snapshot_restore")
-            || body.contains("filter_snapshot_owner_groups")
-            || (body.contains("ExplicitConsumer::Tracker")
-                && body.contains("filter")),
+        body.contains("filter_tracker_consumer_from_snapshot"),
         "restore_explicit_admission_from_snapshot must filter Tracker groups before restore (I-MD-6)"
     );
 }
@@ -411,14 +398,19 @@ fn i_md_5_unpinned_track_mint_no_admission() {
         return;
     }
     let source = read_iron_crab_source("bin/market_data.rs");
-    let none_arm = extract_apply_track_mint_none_arm(&source);
+    let impl_body = extract_market_data_context_apply_track_mint_impl(&source);
+    let none_arm = extract_apply_track_mint_none_arm(&impl_body);
+    assert!(
+        none_arm.contains("inc_market_data_tracker_track_mint_rejected_total"),
+        "apply_track_mint None arm must increment tracker_track_mint_rejected metric (I-MD-5)"
+    );
+    assert!(
+        none_arm.contains("false"),
+        "apply_track_mint None arm must return false (I-MD-5)"
+    );
     assert!(
         !none_arm.contains("try_admit_owner_group(admission, Self::tracker_mint_owner"),
         "apply_track_mint None arm must not admit ExplicitConsumer::Tracker via tracker_mint_owner (I-MD-5)"
-    );
-    assert!(
-        !none_arm.contains("ExplicitConsumer::Tracker"),
-        "apply_track_mint None arm must not reference ExplicitConsumer::Tracker admission (I-MD-5)"
     );
     assert!(
         !none_arm.contains("inc_market_data_tracker_admission_admitted_total"),
