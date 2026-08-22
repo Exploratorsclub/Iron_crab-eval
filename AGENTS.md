@@ -6,11 +6,27 @@ This is a pure Rust test suite (blackbox + invariant tests) for the IronCrab Sol
 
 ### Build & Test
 
+Zwei Gates — nicht verwechseln:
+
+**PR-Gate (schlank, wie Workflow „Rust“):**
+
 ```bash
 cargo fmt -p ironcrab-eval -- --check
+cargo check
+cargo build
+cargo clippy -p ironcrab-eval -- -D warnings
+```
+
+Kein `--all-targets`, kein `cargo test` in diesem Gate (sonst koppelt Clippy/Tests die öffentliche `ironcrab`-API und blockiert parallele Impl-PRs).
+
+**Volle Suite** (Impl-CI Job „Eval (Level 5)“, manueller Workflow, oder lokal mit Sibling-Patch):
+
+```bash
 cargo clippy -p ironcrab-eval --all-targets -- -D warnings
 cargo test --verbose
 ```
+
+Siehe [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Dependency
 

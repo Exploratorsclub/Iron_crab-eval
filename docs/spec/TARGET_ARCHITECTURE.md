@@ -1,11 +1,21 @@
-# Target Architecture (Debuggable-First, Data Plane, Momentum-Only)
+# Target Architecture (Debuggable-First, Data Plane, Momentum + Arb)
 
-Dieses Dokument ist die **konsolidierte Zielarchitektur** für IronCrab, basierend auf `solana_trading_system_architecture2.md`, aber mit den wichtigen Korrekturen aus der späteren Diskussion:
+Dieses Dokument ist die **konsolidierte Zielarchitektur** für IronCrab, basierend auf `solana_trading_system_architecture2.md`, aber mit den wichtigen Korrekturen aus der späteren Diskussion.
+
+**Aktueller Betriebsstand (2026-08, verbindlich gegenüber älteren Absätzen unten):**
+
+- Zwei Repos, Level-5: Impl `Iron_crab` Branch `architecture-rebuild` (gemeinsam); Spec/Tests `Iron_crab-eval` Branch `main`. `architecture-rebuild-next` ist Maintainer-Entwicklung. Onboarding: `CONTRIBUTING.md`.
+- Prozesse: `market-data`, `momentum-bot`, **`arb-strategy` als eigenes Binary** (Typ-A-Arbitrage, nicht optional), `execution-engine` (einziger Signer), `position-manager`, `control-plane` (Python), `trades-server` (Python).
+- Hot Path: Geyser-First, kein RPC. Bot-Zustand: JetStream SSOT. Intents: NATS `ironcrab.v1.*`.
+- DEXes: Raydium AMM V4 / CPMM, Orca Whirlpool, Meteora DLMM / CPMM, PumpFun, PumpSwap.
+- Bei Konflikt mit `docs/spec/INVARIANTS.md` oder `CONTRIBUTING.md` gewinnen diese, nicht historische Formulierungen in diesem File (z. B. „Momentum-Only“, „Arb nur MEV-Worker in der Engine“).
+
+Historische Leitplanken, die weiter gelten:
 
 - **Kein Sniper im klassischen Sinne** (kein „alle neuen Mints sofort kaufen“).
 - **Data Plane** lädt/normalisiert Markt-Daten **einmal**.
-- **Momentum** ist die primäre Strategie (Early + Established als Policies/Regimes).
-- **MEV ist eine Execution-Fähigkeit**: Arbitrage/Backrun/etc. sind **Worker im MEV-Layer** der Execution Engine.
+- **Momentum** bleibt eine primäre Strategie (Early + Established als Policies/Regimes).
+- **Typ-B-MEV** (Backrun etc.) bleibt Execution-Fähigkeit, kein zweiter Signer.
 
 ---
 
@@ -32,8 +42,9 @@ Aufgabe: **einmalige** Markt-Daten-Ingestion und Normalisierung.
 - **PRIMARY**: `GeyserPoolDiscovery` für Echtzeit-Pool-Discovery
   - Raydium AMM V4, CPMM
   - Orca Whirlpool
-  - Meteora DLMM
+  - Meteora DLMM, Meteora CPMM
   - PumpFun (TX-based)
+  - PumpSwap / PumpFun AMM (TX + Account)
 - **FALLBACK**: RPC `getProgramAccounts` nur für Bootstrap/Offline-Analyse
   - **NICHT** für laufenden Produktionsbetrieb (zu langsam, zu teuer)
 
@@ -67,7 +78,7 @@ Wichtig:
 Output:
 - `TradeIntents` (Request/Reply oder Pub/Sub)
 
-### 2.2.1 Optional (empfohlen): `arb-strategy` (Rust)
+### 2.2.1 `arb-strategy` (Rust, eigenes Binary)
 
 **Wichtig zur Einordnung (vermeidet dauernde Verwirrung):**
 
@@ -89,8 +100,7 @@ Für Typ A ist ein eigener Strategy-Worker sinnvoll:
 - berechnet EV/ROI und erzeugt `TradeIntent`s
 - signiert/sendet nie selbst
 
-Hinweis: Typ A kann als eigenes Binary (`arb-strategy`) laufen oder als separater Worker im `momentum-bot`.
-Für Debuggability/Fault Isolation ist ein eigenes Binary meist klarer.
+Typ A läuft als eigenes Binary `arb-strategy` (Fault Isolation). Kein zweiter Signer.
 
 ### 2.3 Execution Plane: `execution-engine` (Rust)
 
@@ -137,6 +147,7 @@ Aufgabe: Grafana Infinity Datasource für Trade-Visualisierung.
 | momentum-bot | 9802 | `/metrics` |
 | arb-strategy | 9803 | `/metrics` |
 | execution-engine | 9804 | `/metrics` |
+| position-manager | 9805 | `/metrics` |
 | control-plane | 8080 | REST API |
 | trades-server | 9899 | `/trades` |
 

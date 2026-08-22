@@ -7,7 +7,7 @@ Formale Verhaltens-Invarianten. AI darf diese Regeln **niemals** verletzen. Bei 
 - **Leitlinie**: Architektur-Regel, nicht als Eval-Test abgedeckt
 - **Ziel**: Noch nicht erfüllt, dokumentiert für Zukunft
 
-**Quellen:** TARGET_ARCHITECTURE.md, DEFINITION_OF_DONE.md, ROLE_SEPARATION.md, Iron_crab/docs/INVARIANTS.md
+**Quellen:** TARGET_ARCHITECTURE.md, DEFINITION_OF_DONE.md, ROLE_SEPARATION.md, Iron_crab/docs/INVARIANTS.md, CONTRIBUTING.md
 
 ---
 
