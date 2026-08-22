@@ -1,6 +1,8 @@
 # Definition of Done (DoD) – Umbau auf die Zielarchitektur
 
-Diese Checkliste ist die **Abnahme-Definition** für den Umbau zur Referenzarchitektur aus `solana_trading_system_architecture2.md`.
+**Stand-Hinweis (2026-08-22):** Das ist die **historische Abnahme-Checkliste** des Multi-Prozess-Umbaus, kein Tages-Workflow. Verbindlich für neue Arbeit: `INVARIANTS.md`, `CONTRIBUTING.md`, `ROLE_SEPARATION.md`. Formulierungen mit „Sniper“, `KEYPAIR_PATH` ohne `IRONCRAB_`-Prefix oder fehlendem `arb-strategy` sind Altbestand; Keys heißen `IRONCRAB_KEYPAIR_*`, Strategien sind `momentum-bot` + `arb-strategy`.
+
+Diese Checkliste war die **Abnahme-Definition** für den Umbau zur Referenzarchitektur aus `solana_trading_system_architecture2.md`.
 
 Ziel: **deterministisch, debugbar, sicher** – und zwar mit messbaren Kriterien, nicht Bauchgefühl.
 

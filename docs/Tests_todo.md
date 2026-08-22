@@ -1,200 +1,67 @@
-# Tests TODO – Noch zu implementierende Eval-Tests
+# Tests TODO – noch offene Eval-Tests
 
-**Zweck:** Zentrales Dokument für Tests, die noch implementiert werden müssen, inkl. priorisierter Empfehlungen aus ARCHITECTURE_AUDIT und EVAL_TEST_CANDIDATES.
+**Stand:** 2026-08-22  
+**Zweck:** Lebendes Backlog. Erledigte Einträge sind unten kompakt; nicht erneut implementieren.
 
-**Quellen:** ARCHITECTURE_AUDIT.md (Iron_crab), EVAL_TEST_CANDIDATES.md, INVARIANTS.md
+**Quellen:** `docs/spec/INVARIANTS.md`, `EVAL_TEST_CANDIDATES.md` (historisch), Impl `ARCHITECTURE_AUDIT.md` (nicht umschreiben).
 
-**Hinweis (PumpFun IDL):** A.25 wurde auf die aktuelle PumpFun-IDL mit zusätzlichem Argument `track_volume: OptionBool` erweitert (Instruction-Daten 25 Byte; IronCrab-Hot-Path `track_volume=false`).
-
----
-
-## 1. Priorisierte Empfehlungen (ARCHITECTURE_AUDIT-Ableitung)
-
-Diese Empfehlungen wurden aus der Abgleichung von ARCHITECTURE_AUDIT.md, INVARIANTS.md und EVAL_TEST_CANDIDATES.md abgeleitet.
-
-### Priorität 1: Pool-Matching Invariante (I-13 / FIX-38) — ERLEDIGT
-
-**Invariante:** Position-Preis-Updates (Trade, PoolCacheUpdate) nur anwenden, wenn `source_pool == position.pool`.
-
-**Begründung:**
-- I-13 ist in INVARIANTS.md als kritisch dokumentiert; Verletzung führt zu falscher PnL und TAKE_PROFIT bei Verlust.
-- ARCHITECTURE_AUDIT bestätigt: Eingehalten, aber **kein Eval-Test** verifiziert das.
-- Bei Refactors kann dies unbeabsichtigt brechen.
-
-**Test-Ansatz (Blackbox):**
-- Position mit `pool = A`.
-- Preis-Update mit `source_pool = B` → Update wird **nicht** angewendet.
-- Preis-Update mit `source_pool = A` → Update wird angewendet.
-
-**Zieldatei:** `tests/invariants_pool_matching.rs`
-
-**Spec-Ergänzung:** INVARIANTS.md A.11 dokumentieren.
+**Hinweis (PumpFun IDL):** A.25 nutzt `track_volume: OptionBool` (Instruction-Daten 25 Byte; Hot Path `track_volume=false`).
 
 ---
 
-### Priorität 2: Liquidation-Routing / 6005-Retry — ERLEDIGT
+## Offene Punkte
 
-**Invariante:** Nach 6005 mark_pumpfun_complete_for_mint; Liquidation Phase 2 überspringt PumpFun (complete) und nutzt PumpSwap AMM.
+### 1. DEX-übergreifende Recovery-Verifikation (Eval-Gap)
 
-**Test-Ansatz:**
-- `invariants_liquidation_flow.rs`: mark_pumpfun_complete_for_mint, find_pump_amm_pool_by_base_mint.
-- `golden_replay_liquidation_6005_retry`: Replay-Determinismus für 6005-Fixture (Iron_crab).
+Cold-Path force-refresh ist im Impl für die bekannten DEX-Pfade gemergt. **Eval-/On-Wire-Vertrag** fehlt noch für **Raydium CPMM** und **Meteora CPMM**. PumpSwap und PumpFun Bonding sind abgedeckt.
 
-**Zieldatei:** `tests/invariants_liquidation_flow.rs`, `golden_replay_blackbox.rs`
+Richtung: pro DEX ein enger Blackbox-Slice, kein All-at-once-Test.
 
----
-
-### Priorität 3: Hot-Path-RPC-Freiheit (I-4, I-7) — ERLEDIGT
-
-**Invariante:** DEX-Connectors liefern bei Cache-Miss None/Err ohne RPC (Hot Path).
-
-**Test-Ansatz:** Dummy-RPC-URL (`http://127.0.0.1:0`). Bei Cache-Miss wird vor RPC-Fallback abgebrochen → keine Netzwerk-Anfrage.
-
-**Zieldatei:** `tests/invariants_hot_path_no_rpc.rs`
-
----
-
-## 2. Aus EVAL_TEST_CANDIDATES (Priorität 3, optional)
-
-Diese Tests wurden in EVAL_TEST_CANDIDATES als „vorerst im Impl-Repo“ markiert. Bei Bedarf als Invarianten in die Spec aufnehmen und in eval implementieren.
-
-| Kandidat | Quelle | Invariante? | Empfehlung |
-|----------|--------|-------------|------------|
-| `router_builds_hops2_plan_with_min_out` | router_hops2_plan.rs | ✅ | Migriert (`invariants_router_slippage.rs`) |
-| `router_picks_higher_out_amount` | router_best_quote.rs | ✅ | Migriert (`invariants_router_slippage.rs`) |
-| `pruning_keeps_profitable_cycle` | arbitrage_cycle_pruning.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.16) |
-| `profit_ranking_orders_cycles` | arbitrage_profit_ranking.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.15) |
-| `aggregate_picks_higher_output` | arbitrage_edge_aggregate.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.14) |
-| `enumerate_4hop_cycle` | arbitrage_cycle_generic.rs | ✅ | Migriert (`invariants_arbitrage_engine.rs` A.17) |
-| `test_orca_build_swap_ix_*` | execution_orca_builder.rs | ✅ | Migriert (`invariants_orca_ix.rs` DoD §H) |
-| `test_pumpfun_build_*`, `test_tx_builder_supports_pumpfun_sell_pure_derivation` | execution_pumpfun_builder.rs | ✅ | Migriert (`invariants_pumpfun_ix.rs` DoD §H + TxBuilder SELL) |
-| `single_swap_estimate_in_range` | compute_budget_estimator.rs | ✅ | Migriert (`invariants_compute_budget.rs` A.18) |
-| ConfigUpdate-Tests | hot_reload_smoke_test.rs | ⚠️ | DoD §I Runtime-Config; Schema-Konsistenz; ausgelassen |
-
----
-
-## 3. Offene Invarianten ohne Eval-Test
-
-Invarianten aus INVARIANTS.md B.x, die **nicht** durch Eval-Tests abgedeckt sind:
-
-| ID | Invariante | Status |
-|----|------------|--------|
-| I-13 | Pool-Matching (FIX-38) | ✅ Eval-getestet (`invariants_pool_matching.rs`) |
-| I-4 / I-7 | Hot Path RPC-Freiheit | ✅ Eval-getestet (`invariants_hot_path_no_rpc.rs`) |
-| I-14 | tokens_per_sol Konvention | Eval-getestet (`invariants_tokens_per_sol.rs`) |
-
----
-
-## 4. Implementierungs-Checkliste
-
-| # | Test | Priorität | Zieldatei | Status |
-|---|------|-----------|-----------|--------|
-| 1 | Pool-Matching (I-13) | P1 | `invariants_pool_matching.rs` | erledigt |
-| 2 | Liquidation 6005-Retry Flow | P2 | `invariants_liquidation_flow.rs`, `golden_replay_blackbox.rs` | erledigt |
-| 3 | Hot-Path RPC-Freiheit | P3 | `invariants_hot_path_no_rpc.rs` | erledigt |
-| 4 | Router hops2 + best_quote | optional | `invariants_router_slippage.rs` | erledigt |
-| 5 | Arbitrage Engine (Edge-Agg, Ranking, Pruning, 4-Hop) | optional | `invariants_arbitrage_engine.rs` | erledigt |
-| 6 | Orca/PumpFun build_swap_ix (DoD §H) | optional | `invariants_orca_ix.rs`, `invariants_pumpfun_ix.rs` | erledigt |
-| 7 | Compute-Budget estimate_single_swap + large_notional | optional | `invariants_compute_budget.rs` | erledigt |
-| 8 | tokens_per_sol (I-14) | optional | `invariants_tokens_per_sol.rs` | erledigt |
-| 9 | TxBuilder PumpFun SELL | optional | `invariants_pumpfun_ix.rs` | erledigt |
-| 10 | DEX Parser PumpSwap BUY/SELL (A.20) | P1 | `invariants_dex_parser_pumpswap.rs` | erledigt |
-| 11 | DEX Parser CPI Fallback (A.21) | P1 | `invariants_dex_parser_cpi.rs` | erledigt |
-| 12 | PumpFun Cashback-Upgrade (A.22-A.24) | P0 | `invariants_pumpfun_cashback.rs` | erledigt |
-| 13 | PumpFun Market Order (A.25-A.26) | P0 | `invariants_pumpfun_market_order.rs` | erledigt |
-| 14 | PumpSwap Recovery-Semantik: Cold-Path force refresh, Hot-Path nicht blockieren | P0 | neue/erweiterte PumpSwap/Liquidation Invarianten | erledigt (Impl Scope 1-3 gemergt, Eval-Vertrag in PR #13 gemergt) |
-| 15 | Trailing Session High / quote-first STOP (I-13/I-14 Policy, PR #148) | P1 | `invariants_trailing_session_high.rs` | erledigt |
-| 16 | I-MD-5 TX-Tracker ban + I-MD-6 Snapshot scope (A.51) | P1 | `invariants_md_explicit_track_requests_only.rs` | erledigt |
-
----
-
-## 5. Migrationsplan-Vorlage (pro Test)
-
-Für jeden neuen Eval-Test:
-
-1. **Invariante in Spec formulieren** (docs/spec/INVARIANTS.md oder bestehendes Spec-Dokument)
-2. **Test in ironcrab-eval implementieren** (nur über öffentliche API, keine Interna)
-3. **Im Impl-Repo:** Original behalten (als Regression) oder entfernen, wenn Eval-Test Deckung übernimmt
-4. **CI prüfen:** `cargo fmt`, `cargo check`, `cargo clippy`, `cargo test`
-
----
-
-## 7. Neue offene Architektur-/Recovery-Invariante
-
-**Thema:** DEX-uebergreifende Recovery-Semantik nach strukturellem Cache-/Account-Mismatch
-
-**Gewuenschte Invariante:**
-- Hot Path (regulaere Buys/Sells) bleibt RPC-frei und blockiert nicht auf Recovery-Warten.
-- Cold Path (Liquidation / manuelle Recovery) darf bei nachgewiesen stale/invalid cache einen Request an `market-data` senden.
-- Dieser Recovery-Request muss semantisch ein **force refresh** sein, nicht cache-first.
-- `market-data` publiziert den autoritativen Refresh als PoolCacheUpdate; erst der folgende Versuch nutzt den neuen State.
-- Diese Semantik soll nach und nach fuer alle relevanten DEX-Pfade umgesetzt werden, damit sellbare Token nicht wegen stale State in der Wallet liegen bleiben.
-
-**Warum offen:**
-- Die aktuelle Architektur trennt Hot Path vs. Cold Path korrekt auf dem Papier, aber die Recovery-Semantik ist bisher nur teilweise und DEX-spezifisch umgesetzt.
-- Das Ziel ist eine schrittweise DEX-Ausweitung in kleinen Scopes, nicht ein grosser Refactor.
-
-**Impl-/Eval-Status (2026-03-30):**
-- Cold-Path-Recovery mit `force_refresh=true` und bounded Wait/Retry ist im Impl-Repo gemergt.
-- Die Impl-Control-Plane deckt jetzt alle aktuell implementierten DEX-Pfade ab: PumpSwap, PumpFun Bonding Curve, Orca Whirlpool, Meteora DLMM, Raydium AMM, Raydium CPMM und Meteora CPMM.
-- Hot-Path fuer regulaere `momentum-bot` PumpSwap-SELLs triggert nach strukturellem Sim-Fail einen nicht-blockierenden async Refresh an `market-data`, ohne Retry im selben Intent.
-- Wiederholte Hot-Path-Refreshes werden lokal per Mint gededupliziert; der Cooldown startet erst nach erfolgreichem `nats.publish -> Ok(true)`.
-- Der Healing-Pfad ist zusaetzlich ueber Runtime-Metriken beobachtbar (Trigger, suppressed, publish ok/fail, no-NATS).
-- Der PumpSwap-Eval-Vertrag ist gemergt; dazu gehoert jetzt auch der schmale A.43-E2E-Wire-Slice fuer manuellen `sell_all` mit `pool_address_hint` (`request_reply_e2e_manual_pumpswap_sell_all_pool_hint_roundtrip`).
-- PumpSwap ist damit der erste vollstaendige Slice.
-- PumpFun Bonding Curve Cold-Path-Recovery ist im Impl-Repo jetzt ebenfalls gemergt.
-- Der enge PumpFun-Bonding-Curve-Eval-Vertrag fuer force-refresh / autoritativen `market-data`-Refresh / bounded one-retry im Cold Path ist ebenfalls gemergt (A.44).
-- Fuer Raydium CPMM und Meteora CPMM gibt es aktuell noch keinen entsprechenden Eval-/On-Wire-Vertrag; das ist der verbleibende Verifikations-Gap innerhalb dieses ansonsten abgeschlossenen Request/Reply-Rollouts.
-
-**Empfohlene Test-Richtung:**
-- Pro DEX-Slice einen engen Blackbox-Vertrag formulieren statt einen grossen All-at-once-Test.
-- Fuer PumpSwap ist dieser Slice bereits erledigt.
-- Fuer PumpFun Bonding Curve ist dieser Slice ebenfalls erledigt.
-- Falls noch Verifikationsparitaet fuer alle DEX-Connectoren gewuenscht ist, sind Raydium-CPMM- und Meteora-CPMM-Eval-Slices die naechsten kleinen, klar umrissenen Tests.
-- Ansonsten sollten neue Scopes nur noch aus neuer Runtime-Evidenz oder aus einer noch ungetesteten DEX-spezifischen Recovery-Luecke geschnitten werden, nicht mehr aus diesem bereits weitgehend geschlossenen Rollout-Strang.
-
----
-
-## 8. L2c — Momentum Imminent-Entry (I-MD-9) — OFFEN
+### 2. L2c — Momentum Imminent-Entry (I-MD-9 / A.50) — OFFEN
 
 **Spec:** `docs/spec/MOMENTUM_ACTIVE_POOLS.md`, `INVARIANTS.md` A.50  
-**Plan:** `docs/plans/plan_realtime_slo_processable_set_20260725.md` §3.5  
-**Impl-Scope:** L2c-Mom (danach optional Eval-Gates)
+**Gewünscht:** Pin-Publish nicht allein bei Discovery; Probe/Scale-In nur nach Hot-Set + Revalidate; `WaitHotSet` Unpin; Open-Position `pin_reason: position` bleibt must-hot; Metriken `filter_pass_hot_fresh` / `wait_hot_set_*` / `intent_path`.
 
-**Gewünschte Tests (nach Impl, Test Authority):**
+**Zieldatei:** `tests/invariants_momentum_imminent_entry.rs` (existiert noch nicht).
 
-1. Source-/Publish-Vertrag: Pin-Publish (`TOPIC_MOMENTUM_ACTIVE_POOLS` / `active` mit `pin_reason: tracker`) **nicht** allein bei Tracker-Create / Discovery.  
-2. Verhaltensvertrag: Intent ProbeBuy/ScaleIn nur nach Hot-Set-Frische **und** Pre-Intent-Filter-Revalidate; kein Blind-Fire nach initialem Filter-Pass.  
-3. `WaitHotSet`: Filter-rot oder Timeout → Unpin / `removed` (`filter_failed` / `hot_set_timeout`), kein Intent.  
-4. Open-Position `pin_reason: position` bleibt Must-hot (Regression gegen Shed).
+**Prüf-Befehle:** Eval-Workflow „Rust“ (`fmt`, `check`/`build`, `clippy -p ironcrab-eval` ohne `--all-targets`). Volle Suite: Impl Eval Level 5.
 
-**Zieldatei (Vorschlag):** `tests/invariants_momentum_imminent_entry.rs` (oder Erweiterung bestehender Momentum-Active-Pools-Gates).
+### 3. A.48 Arb Quote Contract (Material-Slot / Fingerprint)
 
-**Prüf-Befehle (Eval-Repo „Rust“-Workflow):** `cargo fmt -p ironcrab-eval -- --check`, `cargo check`/`cargo build`, `cargo clippy -p ironcrab-eval` (ohne `--all-targets`). Volle Suite via Impl Eval Level 5 / manuell.
+Datei `tests/invariants_arb_quote_contract.rs` existiert. Spec-Text A.48 (Material-Slot, Heartbeat darf `as_of_slot` nicht fälschen, Idle-Buy+Live-Sell nicht `passed_gates`) bei Spec-Änderungen gegen diese Tests halten; fehlende Fälle hier nachtragen.
 
----
+### 4. Optional / niedrig
 
-## 9. A.51 — I-MD-5 TX-Tracker ban + I-MD-6 Snapshot scope — ERLEDIGT
-
-**Spec:** `INVARIANTS.md` A.51  
-**Datei:** `tests/invariants_md_explicit_track_requests_only.rs`
-
-**Getestet:**
-- TX-Pfad: kein `MdStateCommand::TrackMint` in `tx_handler.rs` (`tx_ingest_no_track_mint_enqueue`); `pool_mint_map` Sidefx bleibt erlaubt (`tx_ingest_pool_mint_map_sidefx_unchanged`).
-- Snapshot persist/restore ohne `ExplicitConsumer::Tracker` (`i_md_6_snapshot_persist_excludes_tracker`, `i_md_6_snapshot_restore_strips_legacy_tracker`).
-- Unpinned `TrackMint` ohne Tracker-Explicit-Admission (`i_md_5_unpinned_track_mint_no_admission`).
-
-**Prüf-Befehle:** `cargo fmt -p ironcrab-eval -- --check`, `cargo check`, `cargo clippy -p ironcrab-eval`, `cargo test`. Volle Suite mit Sibling `Iron_crab` auf Impl-Branch nach Impl-Merge (Level 5).
+- Control-Plane `ConfigUpdate` Schema-Konsistenz (DoD §I) — bisher ausgelassen.
+- Neue Scopes nur aus Runtime-Evidenz oder ungetesteter DEX-Recovery, nicht aus dem geschlossenen PumpSwap/PumpFun-Rollout.
 
 ---
 
-## 10. Querbezüge
+## Erledigt (nicht erneut aufsetzen)
 
-- **EVAL_TEST_CANDIDATES.md** – Vollständige Kandidaten-Liste
-- **ARCHITECTURE_AUDIT.md** (Iron_crab) – Offene Architektur-Themen, BUG A
-- **INVARIANTS.md** – Eval-getestete vs. nicht getestete Invarianten
-- **DEFINITION_OF_DONE.md** – DoD §G Golden Replays, §H Connector Contracts
+| Thema | Datei(en) |
+|-------|-----------|
+| I-13 Pool-Matching | `invariants_pool_matching.rs` |
+| Liquidation 6005-Retry | `invariants_liquidation_flow.rs`, golden replay |
+| I-4 / I-7 Hot-Path kein RPC | `invariants_hot_path_no_rpc.rs` |
+| Router hops2 / best quote | `invariants_router_slippage.rs` |
+| Arbitrage Engine | `invariants_arbitrage_engine.rs` |
+| Orca / PumpFun IX | `invariants_orca_ix.rs`, `invariants_pumpfun_ix.rs` |
+| Compute-Budget | `invariants_compute_budget.rs` |
+| I-14 tokens_per_sol | `invariants_tokens_per_sol.rs` |
+| DEX Parser PumpSwap / CPI | `invariants_dex_parser_pumpswap.rs`, `invariants_dex_parser_cpi.rs` |
+| PumpFun Cashback / Market Order | `invariants_pumpfun_cashback.rs`, `invariants_pumpfun_market_order.rs` |
+| PumpSwap Recovery + A.43/A.44 | gemergt (Eval-Vertrag) |
+| Trailing Session High | `invariants_trailing_session_high.rs` |
+
+Migrationsplan für **neue** Tests: Invariante in Spec → Blackbox in eval → Impl-Regression behalten oder ersetzen → CI wie CONTRIBUTING.md.
 
 ---
 
-*Erstellt: Test Authority, ironcrab-eval*
+## Querbezüge
+
+- **INVARIANTS.md** – verbindliche Spec
+- **DEFINITION_OF_DONE.md** – historischer Umbau (Banner lesen)
+- **EVAL_TEST_CANDIDATES.md** / **ARCHITECTURE_AUDIT.md** – nicht umschreiben
+
+*ironcrab-eval*

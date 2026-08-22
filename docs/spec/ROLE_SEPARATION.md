@@ -1,20 +1,21 @@
 # Role Separation & Least Privilege
 
-**Source of Truth für Architektur:** `TARGET_ARCHITECTURE.md` (dieser Ordner)
+**Stand:** 2026-08-22  
+**Architektur:** `TARGET_ARCHITECTURE.md` (dieser Ordner). Onboarding: `CONTRIBUTING.md`.
 
-Dieses Dokument beschreibt die **Sicherheitsarchitektur** und **Zugriffsrechte** der IronCrab Multi-Prozess-Architektur.
+Dieses Dokument beschreibt die **Sicherheitsarchitektur** und **Zugriffsrechte**.
 
 ## P0 Non-Negotiables
 
 ### Single Signer Prinzip
 - **NUR `execution-engine`** hat Zugriff auf Wallet-Keys
-- Alle anderen Prozesse (market-data, momentum-bot, control-plane) sind **KEYLESS**
+- Alle anderen Prozesse sind **KEYLESS**: `market-data`, `momentum-bot`, `arb-strategy`, `position-manager`, `control-plane`, `trades-server`
 - Verstoß = sofortiger Prozessabbruch (exit 1)
 
 ### Intent-Only Pattern
-- Strategien (momentum-bot) erzeugen ausschließlich `TradeIntent`s
+- Strategien (`momentum-bot`, `arb-strategy`) erzeugen ausschließlich `TradeIntent`s
 - Keine direkten RPC/TPU/Jito Sends außerhalb der Execution Engine
-- Intents werden über NATS IPC übermittelt
+- Intents über NATS/JetStream (`ironcrab.v1.trade_intents` / Stream `TRADE_INTENTS`)
 
 ## RBAC: Role-Based Access Control (Control Plane API)
 
@@ -81,9 +82,12 @@ KILL_SWITCH_ACTIVATED: user=admin, reason='Manual stop', liquidate=True
 | Prozess           | Wallet Keys | NATS Publish          | NATS Subscribe        | Tx Sign/Send |
 |-------------------|-------------|-----------------------|-----------------------|--------------|
 | execution-engine  | ✅ JA       | ExecutionResults      | TradeIntents, Control | ✅ JA        |
-| market-data       | ❌ NEIN     | MarketEvents          | (keine)               | ❌ NEIN      |
-| momentum-bot      | ❌ NEIN     | TradeIntents          | MarketEvents          | ❌ NEIN      |
+| market-data       | ❌ NEIN     | MarketEvents, PoolCache MASTER | Control, Track-Requests | ❌ NEIN |
+| momentum-bot      | ❌ NEIN     | TradeIntents          | MarketEvents, ExecResults | ❌ NEIN  |
+| arb-strategy      | ❌ NEIN     | TradeIntents, Track-Requests | MarketEvents, PoolCache SLAVE | ❌ NEIN |
+| position-manager  | ❌ NEIN     | Positions-KV          | Wallet snapshots, ExecResults | ❌ NEIN |
 | control-plane     | ❌ NEIN     | Control Commands      | (Status Replies)      | ❌ NEIN      |
+| trades-server     | ❌ NEIN     | —                     | JSONL / results       | ❌ NEIN      |
 
 ## Environment Variables
 
@@ -119,10 +123,8 @@ if std::env::var("IRONCRAB_KEYPAIR_JSON").is_ok()
 }
 ```
 
-### momentum-bot (src/bin/momentum_bot.rs)
-```rust
-// Identische Prüfung mit exit(1)
-```
+### momentum-bot, arb-strategy, position-manager
+Identische Keypair-Prüfung mit `exit(1)` (Rust). `position-manager` ist keyless KV-Writer (`IRONCRAB_WALLET_PUBKEY` ist die **Pubkey**, nicht der Secret).
 
 ### control-plane (Python)
 ```python
@@ -147,8 +149,8 @@ authorization {
       user: "execution-engine"
       password: "$EXEC_NATS_PASS"
       permissions: {
-        subscribe: ["ironcrab.intents.>", "ironcrab.control.>"]
-        publish: ["ironcrab.results.>", "_INBOX.>"]
+        subscribe: ["ironcrab.v1.trade_intents", "ironcrab.v1.control.>"]
+        publish: ["ironcrab.v1.execution_results", "_INBOX.>"]
       }
     }
     
@@ -158,7 +160,7 @@ authorization {
       password: "$MD_NATS_PASS"
       permissions: {
         subscribe: []
-        publish: ["ironcrab.market.events"]
+        publish: ["ironcrab.v1.market_events", "ironcrab.pool_cache.*"]
       }
     }
     
@@ -167,19 +169,28 @@ authorization {
       user: "momentum-bot"
       password: "$MB_NATS_PASS"
       permissions: {
-        subscribe: ["ironcrab.market.events"]
-        publish: ["ironcrab.intents.>"]
+        subscribe: ["ironcrab.v1.market_events"]
+        publish: ["ironcrab.v1.trade_intents"]
       }
     }
     
+    # arb-strategy: Empfängt Events/Cache, sendet Intents (keyless)
+    {
+      user: "arb-strategy"
+      password: "$ARB_NATS_PASS"
+      permissions: {
+        subscribe: ["ironcrab.v1.market_events", "ironcrab.pool_cache.*"]
+        publish: ["ironcrab.v1.trade_intents"]
+      }
+    }
+
     # control-plane: Control Commands, keine Trading Topics
     {
       user: "control-plane"
       password: "$CP_NATS_PASS"
       permissions: {
         subscribe: ["_INBOX.>"]
-        publish: ["ironcrab.control.>"]
-        # KEIN Zugriff auf: ironcrab.intents.> oder ironcrab.results.>
+        publish: ["ironcrab.v1.control.>"]
       }
     }
   ]
@@ -218,11 +229,9 @@ chown ironcrab:ironcrab /home/ironcrab/.config/solana/id.json
 # execution-engine.service
 Environment=IRONCRAB_KEYPAIR_PATH=/home/ironcrab/.config/solana/id.json
 
-# momentum-bot.service  
+# momentum-bot.service / arb-strategy.service / position-manager.service / market-data.service
 # KEINE KEYPAIR Variable!
-
-# market-data.service
-# KEINE KEYPAIR Variable!
+# position-manager: IRONCRAB_WALLET_PUBKEY (Pubkey only) ist erlaubt.
 ```
 
 ### Zusätzliche Hardening-Optionen
@@ -249,9 +258,9 @@ systemctl status momentum-bot
 ### Test: NATS ACL prüfen (wenn konfiguriert)
 ```bash
 # Mit momentum-bot Credentials sollte publish auf intents.> funktionieren
-nats pub ironcrab.intents.test "test" --user momentum-bot --password $MB_PASS
+nats pub ironcrab.v1.trade_intents "test" --user momentum-bot --password $MB_PASS
 # Aber NICHT auf control.>
-nats pub ironcrab.control.test "test" --user momentum-bot --password $MB_PASS
+nats pub ironcrab.v1.control.test "test" --user momentum-bot --password $MB_PASS
 # Expected: Permissions Violation
 ```
 
@@ -259,7 +268,7 @@ nats pub ironcrab.control.test "test" --user momentum-bot --password $MB_PASS
 
 - [ ] Keypair-Datei nur für ironcrab User lesbar (chmod 600)
 - [ ] Nur execution-engine.service hat KEYPAIR Environment Variable
-- [ ] market-data und momentum-bot crashen mit exit(1) wenn Keys erkannt
+- [ ] market-data, momentum-bot, arb-strategy, position-manager crashen mit exit(1) wenn Secrets erkannt
 - [ ] control-plane crasht beim Start wenn Keys erkannt
 - [ ] Audit-Log aktiviert und rotiert
 - [ ] (Optional) NATS ACLs konfiguriert

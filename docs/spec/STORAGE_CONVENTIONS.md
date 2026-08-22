@@ -1,12 +1,32 @@
-# Storage Conventions (P0) – Replay & Decision Records
+# Storage Conventions (P0) – Replay, Decision Records, JetStream
 
-Dieses Dokument definiert minimale, **deterministische** Storage-Konventionen (Dateinamen, Schema-Versionierung, Rotation), passend zur Zielarchitektur in `TARGET_ARCHITECTURE.md` (dieser Ordner).
+**Stand:** 2026-08-22
 
-Ziel: Replay/Forensik darf niemals am „irgendwie geloggt“ scheitern.
+Zwei Schichten, nicht verwechseln:
+
+1. **JetStream = SSOT für Bot-Zustand** (I-24a): Pool-Cache, Wallet-Snapshots, TX-Confirms, Intents, ExecutionResults zum Replay nach Restart.
+2. **JSONL = Forensik / Golden Replay:** append-only Dateien unter `trade_logs/`. Hot Path darf darauf nicht blockieren.
 
 ---
 
-## 1) Grundregeln
+## 0) JetStream-Streams (Runtime)
+
+Namen aus `src/nats/jetstream.rs` (Impl):
+
+| Stream | Rolle |
+|--------|--------|
+| `POOL_CACHE` | market-data MASTER → EE/Arb SLAVE (`ironcrab.pool_cache.{pool}`, last-per-subject) |
+| `WALLET_SNAPSHOT` | Wallet-Balances |
+| `WALLET_TX_CONFIRM` | TX-Finality für Confirm-Wait (kein RPC-Fallback, I-7) |
+| `TRADE_INTENTS` | persistente Intents (Startup-Race vs. Core NATS) |
+| `EXECUTION_RESULTS` | persistente Results |
+| `CONFIG_UPDATES` | Config-Reload |
+
+Core NATS bleibt für hochfrequente MarketEvents (`ironcrab.v1.market_events`).
+
+---
+
+## 1) Grundregeln (JSONL)
 
 - **Hot Path safe**: Trading-Pfade dürfen nicht auf DB/FS blockieren.
 - **Append-only**: Write pattern ist append-only, keine In-Place Updates.
@@ -54,7 +74,7 @@ Jeder JSONL-Record beginnt logisch mit:
 
 - `schema_version` (u32)
 - `ts_unix_ms` (u64)
-- `component` (string) z. B. `market-data`, `momentum-bot`, `execution-engine`
+- `component` (string) z. B. `market-data`, `momentum-bot`, `arb-strategy`, `execution-engine`, `position-manager`
 - `build` (string) z. B. git SHA oder semver
 - `run_id` (uuid/string) – Prozesslauf-ID
 
@@ -110,7 +130,8 @@ Regel:
 ## 6) Minimaler Replay-„Bundle“
 
 Ein Replay-Case besteht aus:
-- `market_events-*.jsonl` (Input)
+- JetStream-Stand oder Dump der relevanten Streams (mindestens `POOL_CACHE` / Intents / Results, je nach Case)
+- `market_events-*.jsonl` (Input, soweit JSONL geschrieben wird)
 - `trade_intents-*.jsonl`
 - `decision_records-*.jsonl`
 - `execution_results-*.jsonl`
