@@ -24,6 +24,16 @@ Namen aus `src/nats/jetstream.rs` (Impl):
 
 Core NATS bleibt für hochfrequente MarketEvents (`ironcrab.v1.market_events`).
 
+### 0.1 Positionen: KV vs. Writer
+
+Zwei Ebenen, nicht verwechseln:
+
+- **SSOT als Daten:** JetStream-KV-Bucket `POSITION_AUTHORITY` (`src/ipc/schema.rs`: `POSITION_AUTHORITY_KV_BUCKET`). Das ist der persistente Stand offener Positionen, den andere Prozesse nach Restart teilen.
+- **Einziger Writer:** Binary `position-manager` (PA-6b). Es reduced `ExecutionResult` + `WalletBalanceSnapshot` und schreibt den Bucket. Execution-Engine und `momentum-bot` **lesen** ihn (Watch), sie schreiben ihn nicht.
+- **Keine zweite Positions-SSOT:** EE-In-Process-Reducer ist Gate-Cache. Momentum-Overlay/Tracker ist Strategiezustand. LockManager sind Kapital-Locks. Wallet-Snapshots (`WALLET_SNAPSHOT`) sind Input, nicht die Positionsbuchhaltung.
+
+Zwei Writer auf demselben Bucket = Split-Brain.
+
 ---
 
 ## 1) Grundregeln (JSONL)

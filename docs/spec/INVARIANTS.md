@@ -332,10 +332,12 @@ Diese Invarianten werden durch Blackbox-Tests in ironcrab-eval verifiziert.
 - **Kontext:** Prod EXEC_HOT Lag trotz L1/L2b — fruehe Tracker-Pins (~2k) blaehten das Explicit-Set; bewusster Tradeoff Entry-Latenz vs Exit-/Quote-Frische.
 
 ### A.51 Explicit subs only via Track-Requests (I-MD-5 TX-Tracker ban, I-MD-6 snapshot scope)
+
 - **Datei:** `tests/invariants_md_explicit_track_requests_only.rs`
-- **Invariante:** Kein TX-Ingest TrackMint; Snapshot persist/restore ohne ExplicitConsumer::Tracker.
+- **Invariante I-MD-5 (Evolution):** TX-Ingest (`tx_handler.rs`) enqueued **kein** `MdStateCommand::TrackMint` und erzeugt keinen unpinned `ExplicitConsumer::Tracker`-Explicit-Demand. Explicit-Geyser-Subscriptions entstehen nur via Wallet-Pin, Momentum Active Pools / Open-Position Pins, und Arb `track_requests`.
+- **Invariante I-MD-6 (Scope):** Snapshot persist/restore enthaelt **keine** Tracker owner_groups; Legacy-Snapshots mit Tracker werden beim Restore gefiltert. Persistierbar: `Wallet`, `Momentum`, `MomentumPosition`, `Arb` only.
 - **Getestet:** `tx_ingest_no_track_mint_enqueue`; `i_md_6_snapshot_persist_excludes_tracker`; `i_md_6_snapshot_restore_strips_legacy_tracker`; `i_md_5_unpinned_track_mint_no_admission`.
-- **Kontext:** Prod ~99k subs aus TX-Tracker + snapshot restore; Fix Impl PR TBD.
+- **Kontext:** Prod ~99k Geyser subs (~97% TX-Tracker + snapshot restore); User-Fix ohne Ops-Workaround (2026-08-19).
 
 ---
 
@@ -348,7 +350,7 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 | ID | Invariante | Verletzung = |
 |----|------------|--------------|
 | I-1 | **Single-Signer**: Nur execution-engine lädt Keys und signiert/sendet | Architekturbruch |
-| I-2 | **Intent-only**: market-data, momentum-bot, arb-strategy, control-plane sind **keyless** — erzeugen nur TradeIntent oder MarketEvents | Key-Leak-Risiko |
+| I-2 | **Intent-only**: market-data, momentum-bot, arb-strategy, position-manager, control-plane sind **keyless** — erzeugen nur TradeIntent, MarketEvents oder Positions-KV | Key-Leak-Risiko |
 | I-3 | Prozesse außer execution-engine **crashen mit exit(1)** wenn Key-Env-Vars erkannt | DoD §A |
 
 ### B.2 Hot Path vs. Cold Path (I-4 bis I-8)
@@ -402,7 +404,7 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 |----|------------|--------------|
 | I-23 | Keine neuen ad-hoc NATS Topics. An versioned Topics halten oder klar dokumentieren. | Topic-Chaos |
 | I-24 | Topics: ironcrab.v1.market_events, ironcrab.v1.trade_intents, ironcrab.v1.execution_results, ironcrab.v1.decision_records (siehe src/nats/topics.rs). | — |
-| I-24a | **JetStream = SSOT für Bot-Zustand**: Wallet-Balances, Positionen, Pool-Cache, Config gehören in JetStream (persistent). Konsumenten bootstrappen und holen Live-Updates von dort. | Zustands-Drift |
+| I-24a | **JetStream = SSOT für Bot-Zustand**: Wallet-Balances, Positionen, Pool-Cache, Config gehören in JetStream (persistent). Konsumenten bootstrappen und holen Live-Updates von dort. **Positionen:** Bucket `POSITION_AUTHORITY` ist die Daten-SSOT; `position-manager` ist der einzige Writer. EE/Momentum nur lesen. | Zustands-Drift |
 | I-24b | **Core NATS = Market Events**: Chain-Daten (Trades, Blocks, Preise) als Echtzeit-Events. Kein Bot-Zustand über Core NATS — Datenflut zu hoch, keine Persistenz. | — |
 | I-24d | **Cold-Path Discovery nur per Request/Reply**: execution-engine darf fehlende pool_accounts weder selbst discovern noch lokal in den SLAVE Cache schreiben. Discovery, MASTER-Write und JetStream-Publikation bleiben bei market-data. (Eval: A.38) | Architekturbruch |
 
@@ -441,7 +443,7 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Invarianten:**
   1. **QuoteKind-Pairing:** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit gleichem `QuoteKind` (`ExecutableMarginal` oder `LastTradeMid`). Kein Pairing unterschiedlicher Kinds.
   2. **Round-Trip-Screening:** 2-hop v2 Profit wird aus `SOL → Token → SOL` bei konfigurierter Probe-Size abgeleitet, nicht aus Mid-Spread zwischen Reserve- und Trade-Preisen.
-  3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL (Trade vs. unveraenderter State), nicht lose „irgendein Event ≤30s“.
+  3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL (Trade vs. unveraenderter **Material-State** / Fingerprint inkl. DLMM-Bins), nicht lose „irgendein Event ≤30s“ und nicht Cache-Heartbeats mit identischem State. `as_of_slot` = letzter Fingerprint-Wechsel; Cross-DEX zusaetzlich Chain-Head-Bound (`leg_slot_too_old`). Spec: `ARB_QUOTE_CONTRACT.md`.
   4. **Unified Quoter:** Multi-hop und 2-hop nutzen dieselbe `pool_quote`-Implementierung (ab M3 voll eval-enforced; ab M2 fuer 2-hop).
 - **Formal:** `buy.kind == sell.kind` und `profit = sol_back - probe - fees`; Reject `incompatible_quote_kind` statt Legacy `spread_too_large` auf Mid-Mix.
 

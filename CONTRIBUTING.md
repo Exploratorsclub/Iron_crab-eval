@@ -44,7 +44,7 @@ Die Revision in `Cargo.toml` nicht nebenbei anheben. Das ist eine koordinierte Ã
 | `docs/spec/TARGET_ARCHITECTURE.md` | Zielarchitektur; oben steht der aktuelle Betriebsstand. Bei Konflikt gewinnen die Invarianten. |
 | `docs/spec/DEFINITION_OF_DONE.md` | Historische Abnahme-Checkliste des Umbaus, kein Tages-Workflow. |
 | `docs/spec/ROLE_SEPARATION.md` | Rollen / Keyless |
-| `docs/spec/STORAGE_CONVENTIONS.md` | Persistenz / JSONL / Schema |
+| `docs/spec/STORAGE_CONVENTIONS.md` | Persistenz: JSONL, JetStream, KV `POSITION_AUTHORITY` |
 | `docs/spec/ARB_QUOTE_CONTRACT.md` | Arb-Quote-Vertrag |
 | `docs/spec/ARB_TRACK_REQUESTS.md` | Arb Track-Requests |
 | `docs/spec/MOMENTUM_ACTIVE_POOLS.md` | Momentum Active Pools |

@@ -7,6 +7,7 @@ Dieses Dokument ist die **konsolidierte Zielarchitektur** für IronCrab, basiere
 - Zwei Repos, Level-5: Impl `Iron_crab` Branch `architecture-rebuild` (gemeinsam); Spec/Tests `Iron_crab-eval` Branch `main`. `architecture-rebuild-next` ist Maintainer-Entwicklung. Onboarding: `CONTRIBUTING.md`.
 - Prozesse: `market-data`, `momentum-bot`, **`arb-strategy` als eigenes Binary** (Typ-A-Arbitrage, nicht optional), `execution-engine` (einziger Signer), `position-manager`, `control-plane` (Python), `trades-server` (Python).
 - Hot Path: Geyser-First, kein RPC. Bot-Zustand: JetStream SSOT. Intents: NATS `ironcrab.v1.*`.
+- Positionen: KV `POSITION_AUTHORITY` = Daten-SSOT; `position-manager` = einziger Writer. EE/Momentum nur lesen. Overlay ≠ Positions-SSOT.
 - DEXes: Raydium AMM V4 / CPMM, Orca Whirlpool, Meteora DLMM / CPMM, PumpFun, PumpSwap.
 - Bei Konflikt mit `docs/spec/INVARIANTS.md` oder `CONTRIBUTING.md` gewinnen diese, nicht historische Formulierungen in diesem File (z. B. „Momentum-Only“, „Arb nur MEV-Worker in der Engine“).
 

@@ -85,9 +85,11 @@ KILL_SWITCH_ACTIVATED: user=admin, reason='Manual stop', liquidate=True
 | market-data       | ❌ NEIN     | MarketEvents, PoolCache MASTER | Control, Track-Requests | ❌ NEIN |
 | momentum-bot      | ❌ NEIN     | TradeIntents          | MarketEvents, ExecResults | ❌ NEIN  |
 | arb-strategy      | ❌ NEIN     | TradeIntents, Track-Requests | MarketEvents, PoolCache SLAVE | ❌ NEIN |
-| position-manager  | ❌ NEIN     | Positions-KV          | Wallet snapshots, ExecResults | ❌ NEIN |
+| position-manager  | ❌ NEIN     | `POSITION_AUTHORITY` KV (einziger Writer) | Wallet snapshots, ExecResults | ❌ NEIN |
 | control-plane     | ❌ NEIN     | Control Commands      | (Status Replies)      | ❌ NEIN      |
 | trades-server     | ❌ NEIN     | —                     | JSONL / results       | ❌ NEIN      |
+
+**Positionen:** Der KV-Bucket `POSITION_AUTHORITY` ist die dauerhafte Positions-SSOT. `position-manager` ist der einzige Prozess, der ihn schreibt. EE und Momentum lesen nur. Overlay in `momentum-bot` ist Strategiezustand, nicht die Positionsbuchhaltung. Details: `STORAGE_CONVENTIONS.md` §0.1.
 
 ## Environment Variables
 
@@ -124,7 +126,7 @@ if std::env::var("IRONCRAB_KEYPAIR_JSON").is_ok()
 ```
 
 ### momentum-bot, arb-strategy, position-manager
-Identische Keypair-Prüfung mit `exit(1)` (Rust). `position-manager` ist keyless KV-Writer (`IRONCRAB_WALLET_PUBKEY` ist die **Pubkey**, nicht der Secret).
+Identische Keypair-Prüfung mit `exit(1)` (Rust). `position-manager` ist keyless; `IRONCRAB_WALLET_PUBKEY` ist die **Pubkey**, nicht der Secret. Es ist der einzige Writer von `POSITION_AUTHORITY`, nicht selbst der Bucket.
 
 ### control-plane (Python)
 ```python
