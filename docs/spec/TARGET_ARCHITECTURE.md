@@ -113,18 +113,14 @@ Einzige Instanz mit Keys. Aufgaben:
 - Fee/Compute/Tip Policy zentral
 
 **Implementierte Module:**
-- `LivePoolCache`: Geyser-basierter Pool-State-Cache für frische Quotes (<50ms)
-- `QuoteCalculator`: Berechnet `min_out` basierend auf LivePoolCache Reserves
-- `WsolManager`: Background-Task für automatisches WSOL Wrap/Unwrap
-- `AccountJanitor`: Räumt verwaiste ATAs auf und recovered Rent
-- `CrossDexHandler`: Einheitliches Interface für alle DEX-Swaps
+- `LivePoolCache` (SLAVE): JetStream `POOL_CACHE` von market-data MASTER, nicht eine zweite DEX-Owner-Geyser-Subscription in der Engine
+- `QuoteCalculator`: `min_out` aus Cache-Reserves plus Slippage
+- `WsolManager`: Wrap/Unwrap aus `WALLET_SNAPSHOT` (RPC-Resync nur Cold Path nach Wrap-Timeout)
+- `AccountJanitor`: leere ATAs / Rent
+- `CrossDexHandler`: DEX-Swaps
+- Readonly-Watch auf KV `POSITION_AUTHORITY` (Writer: `position-manager`)
 
-**MEV-Layer (in-proc Worker, keine separaten „MEV Bots"):**
-- `ExecutionArbWorker` (reaktiv; Tx-/Engine-State-getrieben, **nicht** marktgetriebener Scanner)
-- `BackrunWorker`
-- `Liquidation/Re-Arb Worker`
-- `JIT Liquidity Worker`
-- `Fee/Compute Param Worker`
+**Typ-B MEV (Zielbild, kein eigenes Binary):** Backrun/JIT/Fee-Worker sind **nicht** als separate Prod-Services ausgeliefert. Typ-A-Arbitrage ist `arb-strategy`.
 
 ### 2.4 Support Services
 
@@ -139,6 +135,10 @@ Aufgabe: Grafana Infinity Datasource für Trade-Visualisierung.
 - REST API auf Port 8080
 - Zeigt Decisions/Status live (nicht Trading Hot Path)
 - UI für Kontrolle/Realtime; Grafana für Forensik/Trends
+- Metrics-Scrape der Rust-Binaries: 9801–9804 (nicht 9805)
+
+#### 2.4.3 `position-manager` (Rust, keyless)
+Einziger Writer des JetStream-KV `POSITION_AUTHORITY` (Positions-Daten-SSOT). Konsumiert `ExecutionResult` + `WalletBalanceSnapshot`. EE und Momentum lesen nur.
 
 ### 2.5 Metrics Ports
 
@@ -162,7 +162,7 @@ Aufgabe: Grafana Infinity Datasource für Trade-Visualisierung.
 - `ironcrab.v1.execution_results` (execution-engine → UI/control/analytics)
 - `ironcrab.v1.decision_records` (execution-engine → analytics/UI)
 - `ironcrab.v1.control_requests` / `ironcrab.v1.control_responses` (control-plane ↔ binaries)
-- `ironcrab.v1.wallet_balance_updates` (market-data → WsolManager)
+- `ironcrab.wallet_snapshot.{wallet}.{mint}` (market-data → WsolManager / position-manager; Stream `WALLET_SNAPSHOT`)
 
 Legacy Topics (noch in Verwendung):
 - `ironcrab.control.commands` / `ironcrab.control.kill` / `ironcrab.control.config.reload`
@@ -208,13 +208,15 @@ NATS
   │
   ├─► momentum-bot (EARLY/ESTABLISHED policies) ─► TradeIntents ─┐
   │                                                              │
-  ├─► arb-strategy (Multi-Pool Arbitrage) ─────► TradeIntents ───┤
+  ├─► arb-strategy (SLAVE LivePoolCache) ──► TradeIntents ───┤
+  │                                                              │
+  ├─► position-manager ──► KV POSITION_AUTHORITY (sole writer)   │
   │                                                              │
   └─► execution-engine ◄─────────────────────────────────────────┘
           │
-          ├── LivePoolCache (Geyser → fresh quotes)
-          ├── QuoteCalculator (min_out berechnen)
-          ├── WsolManager (WSOL wrap/unwrap)
+          ├── LivePoolCache SLAVE (JetStream POOL_CACHE)
+          ├── QuoteCalculator (min_out)
+          ├── WsolManager (WALLET_SNAPSHOT)
           ├── CrossDexHandler (Tx Build)
           │
           ▼
@@ -271,7 +273,8 @@ Strategies (momentum-bot, arb-strategy) receive event
 | Orca Whirlpool | `whirLbM...` | 653 bytes | Geyser Account Update | ✅ Production |
 | Meteora DLMM | `LBUZKhR...` | 904 bytes | Geyser Account Update | ✅ Production |
 | PumpFun | `6EF8rre...` | Variable | Geyser TX Update | ✅ Production |
-| PumpSwap | `pAMMBay...` | Variable | Geyser TX Update | ✅ Production |
+| PumpSwap | `pAMMBay...` | Variable | Geyser TX + Account | ✅ Production |
+| Meteora CPMM | `cpmmpPFs...` | Variable | Geyser Account | ✅ Production |
 
 ### 4.4 Data Freshness Guarantees
 
@@ -357,8 +360,9 @@ Empfohlener Standard:
 | MarketEvents (roh/normalisiert) | Replay + Debug „Input war so“ | Flat Files (bincode/parquet) | market-data |
 | TradeIntents | Replay + Audit „Strategie wollte X“ | Flat Files | momentum-bot + execution-engine (interne Intents) |
 | Decision Records | Debug „warum wurde gehandelt/abgelehnt“ | Flat Files (jsonl/bincode) | execution-engine |
-| ExecutionResults (sig, slot, fees, pnl attribution) | Audit + Auswertung | Flat Files + optional DB | execution-engine |
-| Long-term Analytics (PnL, cohorts, drilldowns) | Offline/Ad-hoc Queries | ClickHouse/Timescale | analytics-ingestor |
+| ExecutionResults (sig, slot, fees, pnl attribution) | Audit + Auswertung | Flat Files + JetStream `EXECUTION_RESULTS` | execution-engine |
+| Offene Positionen | Prozessübergreifende Positionsbuchhaltung | JetStream KV `POSITION_AUTHORITY` | position-manager (sole writer) |
+| Long-term Analytics (PnL, cohorts, drilldowns) | Offline/Ad-hoc Queries | ClickHouse/Timescale (optional) | analytics-ingestor |
 
 ### 5.1 P0 (minimal, sofort umsetzbar)
 - **Flat files** (bincode/jsonl/parquet) für:
@@ -390,22 +394,22 @@ Wichtig:
 ## 8) Implementierungsstatus
 
 ### Implementiert ✅
-- `market-data`: Geyser ingest + GeyserPoolDiscovery + MarketEvents + WalletBalanceUpdates
-- `momentum-bot`: EARLY + ESTABLISHED Regime + TradeIntents
-- `arb-strategy`: Multi-Pool 2-Hop Arbitrage (siehe `docs/MULTI_POOL_ROUTING.md`)
-- `execution-engine`: 
-  - LivePoolCache + QuoteCalculator (frische Quotes)
-  - WsolManager (Background WSOL Management)
-  - AccountJanitor (ATA Cleanup)
-  - CrossDexHandler (alle DEXes)
+- `market-data`: Geyser ingest + GeyserPoolDiscovery + MarketEvents + JetStream MASTER (`POOL_CACHE`, `WALLET_SNAPSHOT`)
+- `momentum-bot`: EARLY + ESTABLISHED + TradeIntents; Overlay ≠ Positions-SSOT
+- `arb-strategy`: 2-Hop Cross-DEX + N-Hop (`src/arbitrage/`); Quotes laut `ARB_QUOTE_CONTRACT.md`
+- `position-manager`: einziger Writer KV `POSITION_AUTHORITY`
+- `execution-engine`:
+  - LivePoolCache SLAVE + QuoteCalculator
+  - WsolManager + AccountJanitor + CrossDexHandler
   - Capital Locks + Simulate-gate + Decision Records
-- `control-plane`: REST API + Config + Kill-Switch
+  - Readonly `POSITION_AUTHORITY`
+- `control-plane`: REST API + Config + Kill-Switch (Metrics-Scrape 9801–9804)
 - `trades-server`: Grafana Infinity Datasource
 - UI: React Dashboard
 
-### In Arbeit 🚧
-- MEV Workers (Backrun, JIT, etc.)
-- Analytics DB Integration
+### Nicht als Prod-Binary
+- Typ-B MEV-Worker (Backrun, JIT, …)
+- Analytics-DB (ClickHouse/Timescale) — optional, nicht Pflicht für Trading
 
 ---
 
@@ -417,7 +421,7 @@ Wichtig:
 
 **Konzept:** Lernt aus historischen Fills (expected vs actual output) und berechnet P95/P99-basierte Slippage pro Pool statt fester Prozentsätze.
 
-**Warum entfernt:** Das Hauptproblem (stale Quotes, 300-700ms alt) wurde durch LivePoolCache gelöst (Option C). Mit frischen Quotes (<50ms) ist statistisches Slippage-Lernen weniger wertvoll.
+**Warum entfernt:** Stale Quotes wurden durch market-data Geyser + JetStream-SLAVE `LivePoolCache` adressiert, nicht durch Quantile-Learning.
 
 **Falls später gewünscht:** Neuimplementierung basierend auf:
 ```

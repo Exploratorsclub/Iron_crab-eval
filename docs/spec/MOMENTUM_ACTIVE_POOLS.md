@@ -8,7 +8,7 @@
 `momentum_bot` is the source of truth for which `(mint, pool)` pairs need **pinned** Geyser
 explicit accounts (vaults, bin arrays, mint metadata) for **execution freshness** (ProbeBuy /
 ScaleIn / open position exits). `market-data` subscribes to lifecycle updates and pins/unpins
-via the track-worker — **no debounce** that would hide pin latency on the hot path.
+via the track-worker. Pin→Geyser-Update-Ziel **p99 < 500 ms** (coalesced sync im Track-Worker ist erlaubt, solange dieses Budget hält; kein extra Sleep, der Pins versteckt).
 
 **Not** the discovery channel: Existence, trades, buyers, velocity, and most pre-entry filters
 come from the **TX / MarketEvents** path (P1). Pins are for vault/bin freshness around trade

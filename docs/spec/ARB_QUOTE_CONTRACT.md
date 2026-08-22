@@ -1,9 +1,10 @@
 # ARB Quote Contract (Profit-First)
 
-**Status:** Entwurf — Milestone M0  
-**Plan:** `docs/plans/plan_arb_profit_first_rebuild.md`  
-**Scope:** Arb-Modul (`arb-strategy`, `src/arbitrage/*`)  
-**Invariante:** A.48 (Eval, ab E-ARB-2)
+**Stand:** 2026-08-22 — **geltender Vertrag**, nicht Entwurf.
+
+Eval: `tests/invariants_arb_quote_contract.rs`. Invariante A.48. Impl: `arb-strategy` / `src/arbitrage/*` auf `architecture-rebuild`.
+
+**Plan-Datei** `docs/plans/plan_arb_profit_first_rebuild.md` ist historisch; bei Konflikt gilt dieses File plus `INVARIANTS.md`.
 
 ---
 
@@ -51,8 +52,10 @@ PoolQuote {
 Freshness:
 
 - **Trade:** `now - trade_ts ≤ arb_quote_trade_ttl_ms` (default 30s)
-- **State:** Vault/Bin `state_version` unverändert seit `as_of_ts` → gültig bis `arb_quote_state_ttl_ms` (default 120s)
-- Ruhe ≠ stale, solange State unverändert
+- **State:** Vault/Bin **Material-Fingerprint** unverändert seit `as_of_ts` → gültig bis `arb_quote_state_ttl_ms` (default 120s)
+- **Material-Slot:** `as_of_slot` ist der Slot der letzten Fingerprint-Änderung (Reserves + DLMM-Bins bzw. `amount_out`-wirksamer State). Cache-Heartbeats mit identischem State dürfen `as_of_slot` / `updated_at` **nicht** vorrücken.
+- Ruhe ≠ stale **pro Pool**, solange der Fingerprint unverändert ist
+- **Verboten:** ein ruhendes Bein mit einem bewegten Bein über gleiche Heartbeat-Slots zu paaren (`|buy.as_of_slot − sell.as_of_slot| ≤ 2` gilt nur für Material-Slots; zusaetzlich `chain_slot − leg.as_of_slot ≤ arb_max_leg_age_slots`)
 
 ---
 
@@ -67,7 +70,8 @@ profit = sol_back - P - estimated_tx_fees
 ```
 
 **Pairing-Regel:** `buy_pool.kind == sell_pool.kind`  
-**Slot-Regel (M4):** `|buy.as_of_slot - sell.as_of_slot| ≤ arb_max_leg_slot_delta` (default 2)
+**Slot-Regel (M4):** `|buy.as_of_slot - sell.as_of_slot| ≤ arb_max_leg_slot_delta` (default 2)  
+**Age-Regel:** `chain_slot − buy.as_of_slot ≤ arb_max_leg_age_slots` und analog Sell (default 16). `chain_slot` = letzter bekannter Geyser-Head im Prozess, kein RPC.
 
 Reject reasons (Metriken):
 
@@ -75,6 +79,7 @@ Reject reasons (Metriken):
 - `round_trip_unprofitable`
 - `quote_stale`
 - `slot_delta_exceeded`
+- `leg_slot_too_old`
 
 **Kein** `spread_too_large` auf Mid-Preisen im v2-Pfad.
 

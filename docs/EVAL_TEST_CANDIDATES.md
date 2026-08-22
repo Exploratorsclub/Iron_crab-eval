@@ -1,6 +1,10 @@
 # Eval-Test-Kandidaten: Migration von Iron_crab nach ironcrab-eval
 
-**Zweck:** Übersicht aller Tests mit Bewertung:
+**Stand:** 2026-08-22. **Historische Migrationsliste**, kein lebendes Backlog.
+
+Offene Tests: `docs/Tests_todo.md`. Invarianten: `docs/spec/INVARIANTS.md`. Einträge unten können bereits migriert sein.
+
+---
 1. **Testet er an der API-Grenze / als Blackbox?**
 2. **Kann er als Invariante aus der Spec formuliert werden?**
 3. **Eval-Kandidat** (Blackbox + Spec-Invariante) → Migration nach ironcrab-eval
