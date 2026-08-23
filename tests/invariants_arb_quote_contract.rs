@@ -1,8 +1,8 @@
 //! Invariante A.48 (E-ARB-1 + E-ARB-2): Arb Quote Contract — `pool_quote` public API + v2 structural gate.
 //!
-//! 1. **QuoteKind-Pairing:** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit gleichem `QuoteKind`.
+//! 1. **QuoteKind-Pairing (ExecutableMarginal-only):** Cross-DEX 2-hop Round-Trip nur `ExecutableMarginal`.
 //! 2. **Round-Trip-Screening:** 2-hop v2 Profit aus SOL→Token→SOL, nicht Mid-Spread Reserve vs Trade.
-//! 3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL (`state_fingerprint` fuer ExecutableMarginal).
+//! 3. **Freshness:** `PoolQuote.fresh` folgt State-TTL (`state_fingerprint` fuer ExecutableMarginal).
 //! 4. **Unified Quoter:** `pool_quote` exportiert aus `ironcrab::arbitrage`.
 //!
 //! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; keine Aenderung an `Iron_crab/src/`;
@@ -138,11 +138,33 @@ fn quote_kind_pairing_rejects_cross_kind() {
 
     assert!(
         quotes_pairable(&exec_quote, &exec_quote),
-        "gleicher QuoteKind muss pairable sein"
+        "ExecutableMarginal muss mit sich selbst pairable sein"
     );
     assert!(
         !quotes_pairable(&exec_quote, &trade_quote),
         "ExecutableMarginal vs LastTradeMid darf nicht pairable sein (A.48 QuoteKind-Pairing)"
+    );
+}
+
+/// A.48 / A.51: LastTradeMid ist auch gleichartig nicht fuer Cross-DEX Screening erlaubt.
+#[test]
+fn quote_kind_pairing_rejects_last_trade_mid_even_same_kind() {
+    let trade_quote = PoolQuote {
+        pool_address: "trade_pool".into(),
+        dex: "pump_amm".into(),
+        kind: QuoteKind::LastTradeMid,
+        side: QuoteSide::Buy,
+        as_of_slot: 0,
+        as_of_ts: Instant::now(),
+        fresh: true,
+        state_fingerprint: 0,
+        amount_in: 10_000_000,
+        amount_out: 50_000,
+    };
+
+    assert!(
+        !quotes_pairable(&trade_quote, &trade_quote),
+        "LastTradeMid darf nie pairable sein — nur ExecutableMarginal (A.48/A.51)"
     );
 }
 
@@ -178,7 +200,7 @@ fn quote_monotonicity_pump_amm() {
 }
 
 #[test]
-fn executable_marginal_preferred_over_stale_trade() {
+fn executable_marginal_from_account_state_only() {
     let mut pool = sample_pool("pump_amm", "prefer_marginal");
     pool.trade_price_buy = Some(Decimal::new(1, 3));
     pool.trade_price_sell = Some(Decimal::new(1, 3));
@@ -193,12 +215,36 @@ fn executable_marginal_preferred_over_stale_trade() {
         &pool.token_mint,
         DLMM_PROBE_SOL_LAMPORTS,
     )
-    .expect("quote mit Reserves und frischem Trade");
+    .expect("quote mit Account-State (Reserves)");
 
     assert_eq!(
         quote.kind,
         QuoteKind::ExecutableMarginal,
-        "bei vorhandenen Reserves muss ExecutableMarginal LastTradeMid vorgezogen werden"
+        "bei vorhandenen Reserves muss ExecutableMarginal aus Account-State kommen"
+    );
+}
+
+/// A.51: Frische TX-Trade-Preise ohne Account-State duerfen kein Screening-Quote liefern.
+#[test]
+fn trade_only_pool_without_account_state_returns_none() {
+    let mut pool = sample_pool("pump_amm", "trade_only_no_vault");
+    pool.has_reserve_data = false;
+    pool.trade_price_buy = Some(Decimal::new(2, 3));
+    pool.trade_price_sell = Some(Decimal::new(2, 3));
+    pool.trade_updated_at = Instant::now();
+
+    let quote = quote_exact_in(
+        &pool,
+        None,
+        None,
+        NATIVE_SOL_MINT,
+        &pool.token_mint,
+        DLMM_PROBE_SOL_LAMPORTS,
+    );
+
+    assert!(
+        quote.is_none(),
+        "ohne Account-State (Vault/Bins) darf quote_exact_in kein LastTradeMid-Fallback liefern (A.51)"
     );
 }
 
@@ -228,14 +274,10 @@ fn dlmm_quote_requires_bins() {
         DLMM_PROBE_SOL_LAMPORTS,
     );
 
-    match quote {
-        None => {}
-        Some(q) => assert_eq!(
-            q.kind,
-            QuoteKind::LastTradeMid,
-            "ohne DLMM-Bins darf kein ExecutableMarginal-Bin-Walker-Quote kommen"
-        ),
-    }
+    assert!(
+        quote.is_none(),
+        "ohne DLMM-Bins darf kein ExecutableMarginal-Quote und kein LastTradeMid-Fallback kommen (A.48/A.51)"
+    );
 }
 
 // --- E-ARB-2 (M2) ---
@@ -296,6 +338,11 @@ fn round_trip_profit_formula() {
         buy_quote.kind, sell_quote.kind,
         "A.48 QuoteKind-Pairing: buy/sell muessen gleichen QuoteKind haben"
     );
+    assert_eq!(
+        buy_quote.kind,
+        QuoteKind::ExecutableMarginal,
+        "Round-Trip-Screening nur ExecutableMarginal (A.48/A.51)"
+    );
 }
 
 /// A.48 v2-Pfad: bei `arb_two_hop_v2_enabled` keine `comparable_price`-Opportunity-Entscheid.
@@ -329,5 +376,27 @@ fn two_hop_v2_no_legacy_mid_spread_path_when_enabled() {
     assert!(
         check_body.contains("arb_two_hop_v2_enabled") && check_body.contains("check_arbitrage_v2"),
         "check_arbitrage muss bei arb_two_hop_v2_enabled an check_arbitrage_v2 delegieren"
+    );
+}
+
+/// A.48/A.51: v2-Screening darf LastTradeMid weder paaren noch als Fallback nutzen.
+#[test]
+fn two_hop_v2_screening_executable_marginal_only_in_sibling() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+
+    if !prod.contains("fn check_arbitrage_v2") {
+        eprintln!("SKIP: check_arbitrage_v2 not present in sibling arb_strategy.rs");
+        return;
+    }
+
+    let v2_body = extract_fn_block(prod, "check_arbitrage_v2");
+    assert!(
+        !v2_body.contains("QuoteKind::LastTradeMid") && !v2_body.contains("LastTradeMid"),
+        "check_arbitrage_v2 darf LastTradeMid nicht fuer Screening nutzen (A.48/A.51)"
     );
 }

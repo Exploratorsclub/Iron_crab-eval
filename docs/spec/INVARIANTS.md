@@ -438,14 +438,30 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
 
 ### A.48 Arb Quote Contract (Profit-First 2-hop / Multi-hop)
-- **Datei:** `tests/invariants_arb_quote_contract.rs` (E-ARB-1 + E-ARB-2), `tests/invariants_arb_multi_hop_pool_quote.rs` (E-ARB-3 / M3)
+- **Datei:** `tests/invariants_arb_quote_contract.rs` (E-ARB-1 + E-ARB-2), `tests/invariants_arb_multi_hop_pool_quote.rs` (E-ARB-3 / M3), `tests/invariants_tx_account_hard_separation.rs` (A.51 Quote-API)
 - **Spec:** `docs/spec/ARB_QUOTE_CONTRACT.md`, Plan `docs/plans/plan_arb_profit_first_rebuild.md`
 - **Invarianten:**
-  1. **QuoteKind-Pairing:** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit gleichem `QuoteKind` (`ExecutableMarginal` oder `LastTradeMid`). Kein Pairing unterschiedlicher Kinds.
+  1. **QuoteKind-Pairing (ExecutableMarginal-only):** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit `QuoteKind::ExecutableMarginal`. `LastTradeMid` ist fuer Pairing, Screening und `quote_exact_in`-Fallback **verboten** (TX/Account-Trennung, A.51).
   2. **Round-Trip-Screening:** 2-hop v2 Profit wird aus `SOL → Token → SOL` bei konfigurierter Probe-Size abgeleitet, nicht aus Mid-Spread zwischen Reserve- und Trade-Preisen.
-  3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL (Trade vs. unveraenderter **Material-State** / Fingerprint inkl. DLMM-Bins), nicht lose „irgendein Event ≤30s“ und nicht Cache-Heartbeats mit identischem State. `as_of_slot` = letzter Fingerprint-Wechsel; Cross-DEX zusaetzlich Chain-Head-Bound (`leg_slot_too_old`). Spec: `ARB_QUOTE_CONTRACT.md`.
+  3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL fuer unveraenderten **Material-State** / Fingerprint inkl. DLMM-Bins — nicht Trade-TTL als Screening-Fallback. `as_of_slot` = letzter Fingerprint-Wechsel; Cross-DEX zusaetzlich Chain-Head-Bound (`leg_slot_too_old`). Spec: `ARB_QUOTE_CONTRACT.md`.
   4. **Unified Quoter:** Multi-hop und 2-hop nutzen dieselbe `pool_quote`-Implementierung (ab M3 voll eval-enforced; ab M2 fuer 2-hop).
-- **Formal:** `buy.kind == sell.kind` und `profit = sol_back - probe - fees`; Reject `incompatible_quote_kind` statt Legacy `spread_too_large` auf Mid-Mix.
+- **Formal:** `buy.kind == sell.kind == ExecutableMarginal` und `profit = sol_back - probe - fees`; Reject `incompatible_quote_kind` / `no_executable_quote` statt Legacy `spread_too_large` auf Mid-Mix.
+
+### A.51 TX/Account Harte Trennung (User 2026-08-22)
+- **Dateien:** `tests/invariants_tx_account_hard_separation.rs`, `tests/invariants_arb_quote_contract.rs`, `tests/invariants_trailing_session_high.rs` (Momentum Exit-Policy)
+- **Spec:** `docs/spec/ARB_QUOTE_CONTRACT.md` (Arb-Quote-Teil), I-16 (LivePoolCache Account-Quotes autoritativ)
+- **Invariante:** TX = Discovery (+ Layout-Seed fuer Hot-Pins). Account = alleinige Quote-SSOT und alleinige Grundlage fuer Entry-Size, Exit, Arb-Screening und Exit-Reasons.
+- **Formal (Quote-API, Blackbox):**
+  1. `quote_exact_in` liefert im Hot Path nur `ExecutableMarginal` oder `None` — kein `LastTradeMid`-Fallback aus TX-Trade-Marks.
+  2. `quotes_pairable` gilt nur fuer zwei `ExecutableMarginal`-Quotes; `LastTradeMid` ist nie pairable.
+  3. Pools ohne Account-State (Reserves/Bins) liefern kein brauchbares Screening-Quote (`None`), auch wenn frische Trade-Preise vorliegen.
+- **Formal (Momentum Exit, soweit blackbox testbar):**
+  1. Preisbasierter Exit (STOP_LOSS, TRAILING_STOP, TAKE_PROFIT) erfordert executable Account-Quote; ohne Quote → Exit unterdrueckt (kein Intent).
+  2. Drawdown-/Trailing-Trigger nutzen `executable_quote_tps`, nicht Trade-Mark allein (`invariants_trailing_session_high.rs`).
+  3. Keine Exit-Intents aus TX-Signalen / Trade-Marks ohne Account-Quote (Source-Contract `momentum_bot.rs` wenn Sibling vorhanden).
+- **Impl-Unit bereits abgedeckt (nicht Eval-duplizieren):** `MomentumContext::executable_exit_quote` Unit-Tests, pool-korrekte Quote-Auswahl, Unit-Konversion Token-2022 — siehe Impl PRs #416–#420 / Scope 55–56.
+- **Getestet:** `quote_exact_in_never_returns_last_trade_mid`; `quotes_pairable_rejects_last_trade_mid`; `trade_only_pool_without_account_state_returns_none`; `arb_v2_screening_no_last_trade_mid_in_sibling` (skip ohne Sibling); `momentum_exit_requires_executable_quote_contract` (skip ohne Sibling); Trailing/Stop-Policy in `invariants_trailing_session_high.rs`.
+- **Kontext:** Impl-Stand `architecture-rebuild-next` nach PRs #416–#420 (Sidefx split, pin-seed, cache ownership, Arb ExecutableMarginal-only, Mom quote-only exits).
 
 ### A.37-A.40 zurueckgezogen
 - Die zuvor vorgeschlagenen Invarianten A.37-A.40 wurden **nicht** als aktive Eval-Invarianten uebernommen.
