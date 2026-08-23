@@ -9,8 +9,8 @@
 //! Blackbox API + dokumentierte Source-Grep-Gates (wie `invariants_arb_track_requests.rs`).
 
 use ironcrab::arbitrage::pool_quote::{
-    quote_exact_in, quotes_pairable, round_trip_profit_lamports, PoolQuote, QuoteKind,
-    QuotePoolInput, QuoteSide, QuoteVaultInput, RoundTripLeg, DLMM_PROBE_SOL_LAMPORTS,
+    is_usable_quote_kind, quote_exact_in, quotes_pairable, round_trip_profit_lamports, PoolQuote,
+    QuoteKind, QuotePoolInput, QuoteSide, QuoteVaultInput, RoundTripLeg, DLMM_PROBE_SOL_LAMPORTS,
     NATIVE_SOL_MINT,
 };
 use rust_decimal::Decimal;
@@ -146,25 +146,16 @@ fn quote_kind_pairing_rejects_cross_kind() {
     );
 }
 
-/// A.48 / A.51: LastTradeMid ist auch gleichartig nicht fuer Cross-DEX Screening erlaubt.
+/// A.48 / A.51: LastTradeMid ist kein brauchbares Screening-Quote (nur ExecutableMarginal).
 #[test]
-fn quote_kind_pairing_rejects_last_trade_mid_even_same_kind() {
-    let trade_quote = PoolQuote {
-        pool_address: "trade_pool".into(),
-        dex: "pump_amm".into(),
-        kind: QuoteKind::LastTradeMid,
-        side: QuoteSide::Buy,
-        as_of_slot: 0,
-        as_of_ts: Instant::now(),
-        fresh: true,
-        state_fingerprint: 0,
-        amount_in: 10_000_000,
-        amount_out: 50_000,
-    };
-
+fn last_trade_mid_not_usable_quote_kind() {
     assert!(
-        !quotes_pairable(&trade_quote, &trade_quote),
-        "LastTradeMid darf nie pairable sein — nur ExecutableMarginal (A.48/A.51)"
+        is_usable_quote_kind(QuoteKind::ExecutableMarginal),
+        "ExecutableMarginal muss usable sein (A.48)"
+    );
+    assert!(
+        !is_usable_quote_kind(QuoteKind::LastTradeMid),
+        "LastTradeMid darf nicht usable sein — nur ExecutableMarginal (A.48/A.51)"
     );
 }
 

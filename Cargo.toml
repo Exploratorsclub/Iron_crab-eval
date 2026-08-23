@@ -6,12 +6,12 @@ edition = "2021"
 [dependencies]
 # Cloud Agents: git-Dependency fuer isolierte VM-Builds
 # CI + lokal: [patch] ueberschreibt mit Sibling-Pfad (siehe CI workflows)
-ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", rev = "ae181206f1c232e97a936ca727845ace18682b89" }
+ironcrab = { git = "https://github.com/Exploratorsclub/Iron_crab.git", rev = "4305040a9451ccf89d1b656f649a4b175c7c76cc" }
 # Hinweis: `ironcrab` nutzt `yellowstone-grpc` mit `branch = "master"` ohne feste Revision.
 # Neuere `master`-Commits erweitern die Proto-Structs (z. B. `cuckoo_accounts_filter`) und brechen
 # den Build von `ironcrab` @ f7b3092. Im `Cargo.lock` bleiben `yellowstone-grpc-*` daher auf
 # `branch=master#b39a415a219e842143f97440a0d0ef04207152c2` gepinnt — bei `cargo update` Lockfile pruefen.
-# architecture-rebuild-next: TRADE_INTENTS consumer DeliverPolicy::New (ae181206, Impl PR #406); lockfile bei cargo update pruefen.
+# architecture-rebuild-next: TX/Account-Trennung ExecutableMarginal-only (4305040, Impl PR #420 Scope 3); lockfile bei cargo update pruefen.
 solana-sdk = "=3.0.0"
 
 [dev-dependencies]

@@ -11,8 +11,8 @@
 //! Blackbox `pool_quote` API + dokumentierte Source-Grep-Gates auf Sibling-Bins.
 
 use ironcrab::arbitrage::pool_quote::{
-    quote_exact_in, quotes_pairable, PoolQuote, QuoteKind, QuotePoolInput, QuoteSide,
-    QuoteVaultInput, DLMM_PROBE_SOL_LAMPORTS, NATIVE_SOL_MINT,
+    is_usable_quote_kind, quote_exact_in, quotes_pairable, PoolQuote, QuoteKind, QuotePoolInput,
+    QuoteSide, QuoteVaultInput, DLMM_PROBE_SOL_LAMPORTS, NATIVE_SOL_MINT,
 };
 use rust_decimal::Decimal;
 use std::fs;
@@ -155,9 +155,9 @@ fn quote_exact_in_with_vault_never_falls_back_to_last_trade_mid() {
     );
 }
 
-/// `quotes_pairable` erlaubt nur ExecutableMarginal ↔ ExecutableMarginal.
+/// `is_usable_quote_kind` erlaubt nur ExecutableMarginal; `quotes_pairable` bleibt same-kind (Legacy).
 #[test]
-fn quotes_pairable_rejects_last_trade_mid() {
+fn usable_quote_kind_rejects_last_trade_mid() {
     let exec = PoolQuote {
         pool_address: "exec".into(),
         dex: "orca".into(),
@@ -175,10 +175,10 @@ fn quotes_pairable_rejects_last_trade_mid() {
         ..exec.clone()
     };
 
+    assert!(is_usable_quote_kind(QuoteKind::ExecutableMarginal));
+    assert!(!is_usable_quote_kind(QuoteKind::LastTradeMid));
     assert!(quotes_pairable(&exec, &exec));
     assert!(!quotes_pairable(&exec, &trade));
-    assert!(!quotes_pairable(&trade, &trade));
-    assert!(!quotes_pairable(&trade, &exec));
 }
 
 // --- A.51 Momentum Exit Source-Contract (Sibling, skip ohne Checkout) ---
