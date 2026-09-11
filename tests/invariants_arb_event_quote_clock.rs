@@ -321,10 +321,9 @@ fn event_vault_apply_uses_geyser_slot_and_instant_now_not_slave_age() {
 
     let body = extract_fn_block(prod, "consume_vault_seed_from_pool_cache_update");
     assert!(
-        body.contains("update_slot: update.geyser_slot")
-            || body.contains("update.geyser_slot")
-                && body.contains("update_slot")
-                && body.contains("Instant::now()"),
+        (body.contains("update_slot: update.geyser_slot")
+            || (body.contains("update.geyser_slot") && body.contains("update_slot")))
+            && body.contains("Instant::now()"),
         "Event-Apply muss update_slot aus update.geyser_slot und updated_at via Instant::now() setzen"
     );
     assert!(
