@@ -59,7 +59,7 @@ PoolQuote {
 Freshness (nur `ExecutableMarginal`):
 
 - **State:** Vault/Bin **Material-Fingerprint** unverändert seit `as_of_ts` → gültig bis `arb_quote_state_ttl_ms` (default 120s)
-- **Material-Slot:** `as_of_slot` ist der Slot der letzten Fingerprint-Änderung (Reserves + DLMM-Bins bzw. `amount_out`-wirksamer State). Cache-Heartbeats mit identischem State dürfen `as_of_slot` / `updated_at` **nicht** vorrücken.
+- **Material-Slot:** `as_of_slot` ist der Slot der letzten Fingerprint-Änderung (Reserves + DLMM-Bins bzw. `amount_out`-wirksamer State). Cache-Heartbeats mit identischem State dürfen `as_of_slot` / `updated_at` **nicht** vorrücken. Ein echter Account-Vault-Tick mit **höherem** Geyser-`geyser_slot` und unverändertem Reserve-Fingerprint darf den Pin-/Quote-Slot nachziehen (slot_delta-Align) — das ist kein Heartbeat-Spoof.
 - Ruhe ≠ stale **pro Pool**, solange der Fingerprint unverändert ist
 - **Verboten:** ein ruhendes Bein mit einem bewegten Bein über gleiche Heartbeat-Slots zu paaren (`|buy.as_of_slot − sell.as_of_slot| ≤ 2` gilt nur für Material-Slots; zusaetzlich `chain_slot − leg.as_of_slot ≤ arb_max_leg_age_slots`)
 
@@ -126,5 +126,6 @@ Cycle-Profit = produkt der Hop-Quotes minus Fees — kein CP-Approx für DLMM.
 | Test | Milestone |
 |------|-----------|
 | `invariants_arb_quote_contract.rs` | M1 + M2 (ExecutableMarginal-only) |
+| `invariants_arb_event_quote_clock.rs` | Event-Quote-Uhr (I-MD-4 / C1h / Heartbeat Material-Slot) |
 | `invariants_tx_account_hard_separation.rs` | TX/Account-Trennung (A.51) |
 | Multi-hop unified quoter | M3 (E-ARB-3) |
