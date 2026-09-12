@@ -1,4 +1,4 @@
-//! Event-driven Arb Quote-Uhr (I-MD-4 / A.48 Material-Slot / C1h Pin-Guards).
+//! Event-driven Arb Quote-Uhr (I-MD-4 / A.48 Material-Slot, kein Slot-Sustain / C1h Pin-Guards).
 //!
 //! Quote-SSOT = Account/Vault-Tick + JetStream `PoolCacheUpdate`, nicht Heartbeat-SLAVE-Age.
 //! Source-Grep gegen Sibling `Iron_crab/src/bin/*.rs` + `src/market_data/sidefx/handlers.rs`
@@ -201,9 +201,11 @@ fn stale_quote_as_of_ts_not_healed_by_fingerprint_match_alone() {
 }
 
 #[test]
-fn quote_as_of_slot_follows_vault_update_slot() {
-    let pool = sample_pool("orca", "slot_follow_pool");
-    let vault = sample_vault(1_000_000_000_000, 900_000_000, 42, Instant::now());
+fn quote_exact_in_mirrors_vault_update_slot_field() {
+    // A.48: Apply darf vault.update_slot ohne Material-Wechsel nicht bumpen (Source-Grep).
+    // quote_exact_in kopiert das Vault-Feld — das testen wir hier, ohne Slot-Sustain als Soll zu verkaufen.
+    let pool = sample_pool("orca", "vault_field_mirror_pool");
+    let vault = sample_vault(1_000_000_000_000, 1_000_000_000, 42, Instant::now());
     let quote = quote_exact_in(
         &pool,
         Some(&vault),
@@ -215,12 +217,12 @@ fn quote_as_of_slot_follows_vault_update_slot() {
     .expect("quote");
     assert_eq!(
         quote.as_of_slot, vault.update_slot,
-        "PoolQuote.as_of_slot muss Vault-Event-Slot (update_slot) widerspiegeln"
+        "PoolQuote.as_of_slot spiegelt vault.update_slot (Apply-Policy separat via Source-Grep)"
     );
 }
 
 #[test]
-fn identical_reserves_and_slot_keep_as_of_slot_on_requote() {
+fn heartbeat_requote_with_unchanged_vault_keeps_as_of_slot() {
     let pool = sample_pool("pump_amm", "heartbeat_slot_guard_pool");
     let updated_at = Instant::now() - Duration::from_secs(5);
     let vault = sample_vault(1_000_000_000_000, 1_000_000_000, 200, updated_at);
@@ -244,44 +246,10 @@ fn identical_reserves_and_slot_keep_as_of_slot_on_requote() {
     .expect("second quote");
     assert_eq!(
         first.as_of_slot, second.as_of_slot,
-        "identischer Material-Fingerprint + unveraenderter Slot: as_of_slot darf nicht vorruecken (A.48 Heartbeat)"
+        "identischer Material-Fingerprint + unveraenderter vault.update_slot: as_of_slot darf nicht vorruecken (A.48 Heartbeat)"
     );
     assert_eq!(first.as_of_slot, 200);
     assert_eq!(first.state_fingerprint, second.state_fingerprint);
-}
-
-#[test]
-fn event_slot_advance_with_unchanged_fingerprint_updates_as_of_slot() {
-    let pool = sample_pool("orca", "slot_delta_align_pool");
-    let vault_slot_100 = sample_vault(1_000_000_000_000, 1_000_000_000, 100, Instant::now());
-    let quote_100 = quote_exact_in(
-        &pool,
-        Some(&vault_slot_100),
-        None,
-        NATIVE_SOL_MINT,
-        &pool.token_mint,
-        DLMM_PROBE_SOL_LAMPORTS,
-    )
-    .expect("quote slot 100");
-    let vault_slot_102 = sample_vault(1_000_000_000_000, 1_000_000_000, 102, Instant::now());
-    let quote_102 = quote_exact_in(
-        &pool,
-        Some(&vault_slot_102),
-        None,
-        NATIVE_SOL_MINT,
-        &pool.token_mint,
-        DLMM_PROBE_SOL_LAMPORTS,
-    )
-    .expect("quote slot 102");
-    assert_eq!(
-        quote_100.state_fingerprint, quote_102.state_fingerprint,
-        "Reserves unveraendert: Fingerprint gleich"
-    );
-    assert_eq!(quote_102.as_of_slot, 102);
-    assert!(
-        quote_102.as_of_slot > quote_100.as_of_slot,
-        "neuer Geyser-Event-Slot darf as_of_slot nachziehen (slot_delta-Align, kein Heartbeat-Spoof)"
-    );
 }
 
 #[test]
@@ -337,6 +305,20 @@ fn event_vault_apply_uses_geyser_slot_and_instant_now_not_slave_age() {
     assert!(
         body.contains("inc_arb_vault_balance_applied_total"),
         "Event-Apply muss inc_arb_vault_balance_applied_total inkrementieren"
+    );
+    assert!(
+        body.contains("vault_material_unchanged"),
+        "Event-Apply muss unveraendertes Material vor Schreiben filtern (A.48 kein Slot-Sustain)"
+    );
+    assert!(
+        body.contains("return") || body.contains("continue"),
+        "vault_material_unchanged muss Apply abbrechen, bevor vault_balances geschrieben wird"
+    );
+    let has_non_backwards_gate = body.contains("update.geyser_slot > existing.update_slot")
+        || body.contains("update.geyser_slot >= existing.update_slot");
+    assert!(
+        has_non_backwards_gate,
+        "Event-Apply darf update.geyser_slot >= existing.update_slot als Nicht-Rueckwaerts-Gate behalten"
     );
     assert!(
         !body.contains("inc_arb_vault_live_snapshot_seeded_total"),
@@ -428,15 +410,41 @@ fn heartbeat_does_not_spoof_material_slot_in_arb_seed_path() {
         fresher_body.contains("vault_material_unchanged") && fresher_body.contains("return false"),
         "live_pool_cache_fresher_than_vault muss bei unveraendertem Material false liefern (kein Slot-Spoof)"
     );
+}
 
-    if prod.contains("fn consume_vault_seed_from_pool_cache_update") {
-        let consume_body = extract_fn_block(prod, "consume_vault_seed_from_pool_cache_update");
-        assert!(
-            consume_body.contains("update.geyser_slot > existing.update_slot")
-                || consume_body.contains("update.geyser_slot >= existing.update_slot"),
-            "Event-Apply: neuer Geyser-Slot darf Pin-Slot nachziehen (slot_delta-Align)"
-        );
+// --- Source-Grep: DLMM Bin-Overlay — Quote-Window-Fingerprint, kein Slot-Sustain ---
+
+#[test]
+fn bin_array_overlay_bumps_vault_slot_only_on_quote_window_fingerprint_change() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
     }
+    let handlers_path = sidefx_handlers_rs_path();
+    if !handlers_path.is_file() {
+        eprintln!("SKIP: sidefx/handlers.rs fehlt unter {:?}", handlers_path);
+        return;
+    }
+    let handlers = read_sidefx_handlers_source();
+    if !handlers.contains("fn handle_bin_array_update") {
+        eprintln!("SKIP: handle_bin_array_update not in sidefx/handlers.rs");
+        return;
+    }
+
+    let body = extract_fn_block(&handlers, "handle_bin_array_update");
+    let fingerprint_needle = body.contains("dlmm_quote_window_bins_fingerprint")
+        || body.contains("quote_window_bins_fingerprint");
+    assert!(
+        fingerprint_needle,
+        "handle_bin_array_update muss Quote-Window-Bin-Fingerprint fuer Material-Slot nutzen"
+    );
+    assert!(
+        body.contains("vault_material_unchanged") || body.contains("fingerprint"),
+        "Bin-Overlay darf vault.update_slot nur bei Quote-Window-Material-Aenderung setzen"
+    );
+    assert!(
+        body.contains("return") || body.contains("continue"),
+        "Fernes Bin-Array ohne Quote-Window-Treffer muss Overlay-Apply abbrechen (kein Slot-Bump)"
+    );
 }
 
 #[test]

@@ -1,8 +1,8 @@
 # ARB Quote Contract (Profit-First)
 
-**Stand:** 2026-08-22 — **geltender Vertrag**, nicht Entwurf.
+**Stand:** 2026-09-12 — **geltender Vertrag**, nicht Entwurf.
 
-Eval: `tests/invariants_arb_quote_contract.rs`, `tests/invariants_tx_account_hard_separation.rs`. Invariante A.48, A.51. Impl: `arb-strategy` / `src/arbitrage/*` auf `architecture-rebuild-next` (nach PRs #416–#420).
+Eval: `tests/invariants_arb_quote_contract.rs`, `tests/invariants_arb_event_quote_clock.rs`, `tests/invariants_tx_account_hard_separation.rs`. Invariante A.48, A.51. Impl: `arb-strategy` / `src/arbitrage/*` auf `architecture-rebuild` (nach PR #438).
 
 **Plan-Datei** `docs/plans/plan_arb_profit_first_rebuild.md` ist historisch; bei Konflikt gilt dieses File plus `INVARIANTS.md`.
 
@@ -25,7 +25,7 @@ Execution-Wahrheit bleibt **I-9 Simulation** (unverändert).
 
 | Kind | Definition | Wann erlaubt (Cross-DEX Screening) |
 |------|------------|-------------------------------------|
-| `ExecutableMarginal` | `quote_exact_in(pool, mint_in, mint_out, amount)` mit program-nah Math (CPMM, DLMM Bin-Walker) aus **Account-State** (Reserves/Bins) | **Einzige** erlaubte Quote-Kind für Cross-DEX 2-hop / Multi-hop Screening |
+| `ExecutableMarginal` | `quote_exact_in(pool, mint_in, mint_out, amount)` mit program-nah Math (CPMM; DLMM = program-nahe Bin-Walk-Math aus Quote-Window-Bins, **nicht** Mini-CPMM auf Reserves) aus **Account-State** (Reserves/Bins) | **Einzige** erlaubte Quote-Kind für Cross-DEX 2-hop / Multi-hop Screening |
 | `LastTradeMid` | Letzter SOL-quoted Trade aus TX-Parse | **Verboten** für Cross-DEX Pairing, Screening und `quote_exact_in`-Fallback im Hot Path |
 
 **Verboten für Cross-DEX 2-hop Pairing und Hot-Path-Quotes:**
@@ -59,9 +59,10 @@ PoolQuote {
 Freshness (nur `ExecutableMarginal`):
 
 - **State:** Vault/Bin **Material-Fingerprint** unverändert seit `as_of_ts` → gültig bis `arb_quote_state_ttl_ms` (default 120s)
-- **Material-Slot:** `as_of_slot` ist der Slot der letzten Fingerprint-Änderung (Reserves + DLMM-Bins bzw. `amount_out`-wirksamer State). Cache-Heartbeats mit identischem State dürfen `as_of_slot` / `updated_at` **nicht** vorrücken. Ein echter Account-Vault-Tick mit **höherem** Geyser-`geyser_slot` und unverändertem Reserve-Fingerprint darf den Pin-/Quote-Slot nachziehen (slot_delta-Align) — das ist kein Heartbeat-Spoof.
+- **Material-Slot:** `as_of_slot` ist der Slot der letzten Fingerprint-Änderung (Reserves + DLMM-Quote-Window-Bins bzw. `amount_out`-wirksamer State). Cache-Heartbeats mit identischem State dürfen `as_of_slot` / `updated_at` **nicht** vorrücken.
+- **Kein Slot-Sustain:** Ein höherer Geyser-`geyser_slot` bei **unverändertem** Material-Fingerprint darf `vault_balances.update_slot` / `updated_at` / Quote-`as_of_slot` **nicht** nachziehen. Die frühere #437-Ausnahme (slot_delta-Align ohne Fingerprint-Wechsel) ist **zurückgenommen**.
 - Ruhe ≠ stale **pro Pool**, solange der Fingerprint unverändert ist
-- **Verboten:** ein ruhendes Bein mit einem bewegten Bein über gleiche Heartbeat-Slots zu paaren (`|buy.as_of_slot − sell.as_of_slot| ≤ 2` gilt nur für Material-Slots; zusaetzlich `chain_slot − leg.as_of_slot ≤ arb_max_leg_age_slots`)
+- **Verboten:** ein ruhendes Bein mit einem bewegten Bein über gleiche Heartbeat-Slots zu paaren (`|buy.as_of_slot − sell.as_of_slot| ≤ arb_max_leg_slot_delta` (Default 2) gilt nur für Material-Slots; zusätzlich `chain_slot − leg.as_of_slot ≤ arb_max_leg_age_slots`)
 
 Trade-TTL (`arb_quote_trade_ttl_ms`) gilt **nicht** mehr als Screening-Fallback — nur noch Account-State.
 
