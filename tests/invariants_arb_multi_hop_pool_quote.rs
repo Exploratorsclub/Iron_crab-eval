@@ -130,6 +130,10 @@ fn multi_hop_cached_quote_provider_delegates_to_pool_quote() {
 }
 
 /// A.48 M3: DLMM Multi-hop-Quote nutzt Bin-Walker, nicht Reserve-CP-Approx (Blackbox via public API).
+///
+/// Fixture folgt A.48 DLMM Bin-Walk (program-nahe Constant-Price-Mathe), nicht xy=k auf Vault-Reserves.
+/// active_id=0 / bin_step=100 => P=1; Vault- und Bin-Liquiditaet 1:1 (raw Y/X) haelt marginal nahe
+/// reserve_mid, damit dlmm_marginal_price_plausible unter Constant-Price-Walker nicht scheitert.
 #[test]
 fn multi_hop_dlmm_quote_uses_bins_not_reserve_ratio() {
     let cache = create_shared_cache();
@@ -140,8 +144,9 @@ fn multi_hop_dlmm_quote_uses_bins_not_reserve_ratio() {
     let pool = Pubkey::new_unique();
     let active_id = 0i32;
     let bin_step = 100u16;
-    let token_amount = 500_000_000_000u64;
-    let sol_amount = 2_000_000_000u64;
+    // 1:1 raw token-X / SOL-Y in active bin — Bin-Spot plausibel zu reserve_mid (P=1 @ active_id=0).
+    let token_amount = 1_000_000_000_000u64;
+    let sol_amount = 1_000_000_000_000u64;
 
     cache.upsert(
         pool,
@@ -152,8 +157,9 @@ fn multi_hop_dlmm_quote_uses_bins_not_reserve_ratio() {
             reserve_y: Pubkey::new_unique(),
             active_id,
             bin_step,
-            reserve_x_balance: Some(1_000_000_000_000),
-            reserve_y_balance: Some(500_000_000),
+            reserve_x_balance: Some(token_amount),
+            reserve_y_balance: Some(sol_amount),
+            dlmm_bin_params_account_seeded: true,
         }),
         1,
     );
@@ -172,7 +178,7 @@ fn multi_hop_dlmm_quote_uses_bins_not_reserve_ratio() {
         .get_cached_probe_quote(&pool, DexType::MeteoraDlmm, &wsol, &token, probe)
         .expect("DLMM bin-walker quote via CachedQuoteProvider erwartet");
 
-    let fee_bps = 100u64;
+    let fee_bps = 10u64 + u64::from(bin_step.min(100));
     let ri = sol_amount as u128;
     let ro = token_amount as u128;
     let after_fee = probe as u128 * (10000 - fee_bps as u128) / 10000;
