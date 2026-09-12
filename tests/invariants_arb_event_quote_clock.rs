@@ -203,24 +203,53 @@ fn block_range(body: &str, open_brace: usize) -> (usize, usize) {
     panic!("block_range: unclosed block at {open_brace}");
 }
 
+const UPDATE_SLOT_FIELD: &str = ".update_slot";
+
+/// Feld-Zuweisung `.update_slot = …`, nicht Vergleich (`==`, `>=`, …) und nicht Fn-Parameter `update_slot: Type`.
+fn is_update_slot_field_write(body: &str, dot_pos: usize) -> bool {
+    let bytes = body.as_bytes();
+    let after_field = dot_pos + UPDATE_SLOT_FIELD.len();
+    if after_field > bytes.len() {
+        return false;
+    }
+    let mut idx = after_field;
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    if idx >= bytes.len() || bytes[idx] != b'=' {
+        return false;
+    }
+    if idx + 1 < bytes.len() && bytes[idx + 1] == b'=' {
+        return false;
+    }
+    if idx > 0 && matches!(bytes[idx - 1], b'>' | b'<' | b'!') {
+        return false;
+    }
+    true
+}
+
 fn update_slot_write_in_snippet(snippet: &str) -> bool {
-    snippet.contains("update_slot =") || snippet.contains("update_slot:")
+    let mut start = 0usize;
+    while let Some(rel) = snippet[start..].find(UPDATE_SLOT_FIELD) {
+        let dot_pos = start + rel;
+        if is_update_slot_field_write(snippet, dot_pos) {
+            return true;
+        }
+        start = dot_pos + 1;
+    }
+    false
 }
 
 fn update_slot_write_positions(body: &str) -> Vec<usize> {
     let mut positions = Vec::new();
-    for marker in ["update_slot =", "update_slot:"] {
-        let mut start = 0usize;
-        while let Some(rel) = body[start..].find(marker) {
-            let pos = start + rel;
-            if pos == 0 || body.as_bytes()[pos - 1] != b'.' {
-                positions.push(pos);
-            }
-            start = pos + marker.len();
+    let mut start = 0usize;
+    while let Some(rel) = body[start..].find(UPDATE_SLOT_FIELD) {
+        let dot_pos = start + rel;
+        if is_update_slot_field_write(body, dot_pos) {
+            positions.push(dot_pos + 1);
         }
+        start = dot_pos + 1;
     }
-    positions.sort_unstable();
-    positions.dedup();
     positions
 }
 
