@@ -438,12 +438,12 @@ Diese Regeln sind aus Iron_crab/docs/INVARIANTS.md übernommen. Sie werden nicht
 - **Luecke:** Der Claim (getAccount vs getProgramAccounts) erfordert RPC-Call-Beobachtung und ist ohne Mock-RPC nicht blackbox-testbar. Der beobachtbare Vertrag "bekannte Pool-Adresse + pool_accounts → gezielter Pfad funktioniert" ist ueber i24d_after_authoritative_update_retry_can_proceed abgedeckt.
 
 ### A.48 Arb Quote Contract (Profit-First 2-hop / Multi-hop)
-- **Datei:** `tests/invariants_arb_quote_contract.rs` (E-ARB-1 + E-ARB-2), `tests/invariants_arb_multi_hop_pool_quote.rs` (E-ARB-3 / M3), `tests/invariants_tx_account_hard_separation.rs` (A.51 Quote-API)
+- **Datei:** `tests/invariants_arb_quote_contract.rs` (E-ARB-1 + E-ARB-2), `tests/invariants_arb_event_quote_clock.rs` (Material-Slot / kein Slot-Sustain), `tests/invariants_arb_multi_hop_pool_quote.rs` (E-ARB-3 / M3), `tests/invariants_tx_account_hard_separation.rs` (A.51 Quote-API)
 - **Spec:** `docs/spec/ARB_QUOTE_CONTRACT.md`, Plan `docs/plans/plan_arb_profit_first_rebuild.md`
 - **Invarianten:**
   1. **QuoteKind-Pairing (ExecutableMarginal-only):** Cross-DEX 2-hop Round-Trip vergleicht nur Pools mit `QuoteKind::ExecutableMarginal`. `LastTradeMid` ist fuer Pairing, Screening und `quote_exact_in`-Fallback **verboten** (TX/Account-Trennung, A.51).
   2. **Round-Trip-Screening:** 2-hop v2 Profit wird aus `SOL → Token → SOL` bei konfigurierter Probe-Size abgeleitet, nicht aus Mid-Spread zwischen Reserve- und Trade-Preisen.
-  3. **Freshness:** `PoolQuote.fresh` folgt Quote-TTL fuer unveraenderten **Material-State** / Fingerprint inkl. DLMM-Bins — nicht Trade-TTL als Screening-Fallback. `as_of_slot` = letzter Fingerprint-Wechsel; Cross-DEX zusaetzlich Chain-Head-Bound (`leg_slot_too_old`). Spec: `ARB_QUOTE_CONTRACT.md`.
+  3. **Freshness / Material-Slot:** `PoolQuote.fresh` folgt Quote-TTL fuer unveraenderten **Material-State** / Fingerprint inkl. DLMM-Quote-Window-Bins — nicht Trade-TTL als Screening-Fallback. `as_of_slot` = Slot der letzten Fingerprint-Aenderung (Reserves + DLMM-Quote-Window-Bins). Hoeherer Geyser-Slot ohne Fingerprint-Wechsel darf `vault_balances.update_slot` / `updated_at` / Quote-`as_of_slot` **nicht** nachziehen (kein Slot-Sustain; #437 slot_delta-Align zurueckgenommen). Cross-DEX zusaetzlich Chain-Head-Bound (`leg_slot_too_old`). Spec: `ARB_QUOTE_CONTRACT.md`.
   4. **Unified Quoter:** Multi-hop und 2-hop nutzen dieselbe `pool_quote`-Implementierung (ab M3 voll eval-enforced; ab M2 fuer 2-hop).
 - **Formal:** `buy.kind == sell.kind == ExecutableMarginal` und `profit = sol_back - probe - fees`; Reject `incompatible_quote_kind` / `no_executable_quote` statt Legacy `spread_too_large` auf Mid-Mix.
 

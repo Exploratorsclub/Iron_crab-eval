@@ -1,4 +1,4 @@
-//! Event-driven Arb Quote-Uhr (I-MD-4 / A.48 Material-Slot / C1h Pin-Guards).
+//! Event-driven Arb Quote-Uhr (I-MD-4 / A.48 Material-Slot, kein Slot-Sustain / C1h Pin-Guards).
 //!
 //! Quote-SSOT = Account/Vault-Tick + JetStream `PoolCacheUpdate`, nicht Heartbeat-SLAVE-Age.
 //! Source-Grep gegen Sibling `Iron_crab/src/bin/*.rs` + `src/market_data/sidefx/handlers.rs`
@@ -116,6 +116,228 @@ fn assert_no_hot_path_rpc(body: &str, context: &str) {
     }
 }
 
+/// #437 Slot-Sustain: geyser_slot allein darf Apply nicht wieder erlauben.
+fn assert_forbids_slot_sustain_apply_gate(body: &str, context: &str) {
+    let sustain_or = body.contains("|| !vault_material_unchanged")
+        && (body.contains("update.geyser_slot > existing.update_slot")
+            || body.contains("update.geyser_slot >= existing.update_slot"));
+    assert!(
+        !sustain_or,
+        "{context} darf #437-Pattern (geyser_slot > existing OR !vault_material_unchanged) nicht enthalten"
+    );
+    if body.contains("should_apply") && body.contains("update.geyser_slot") {
+        assert!(
+            body.contains("vault_material_unchanged"),
+            "{context}: should_apply mit geyser_slot muss vault_material_unchanged-Skip enthalten (kein Slot-Advance ohne Material)"
+        );
+        if let (Some(material_idx), Some(apply_idx)) = (
+            body.find("vault_material_unchanged"),
+            body.find("should_apply"),
+        ) {
+            assert!(
+                material_idx < apply_idx,
+                "{context}: vault_material_unchanged muss vor should_apply kommen (kein Slot-Sustain-Gate)"
+            );
+        }
+    }
+}
+
+fn first_vault_write_marker(body: &str) -> Option<usize> {
+    [
+        "cache.insert",
+        "vault_balances.insert",
+        "vault_balances.entry",
+    ]
+    .iter()
+    .filter_map(|marker| body.find(marker))
+    .min()
+}
+
+/// Positiv: unveraendertes Material skippt (return false) vor dem ersten Vault-/Cache-Write.
+fn assert_material_unchanged_skips_before_write(body: &str, context: &str) {
+    let material_idx = body
+        .find("vault_material_unchanged")
+        .unwrap_or_else(|| panic!("{context} muss vault_material_unchanged enthalten"));
+    let write_idx = first_vault_write_marker(body).unwrap_or_else(|| {
+        panic!("{context} muss cache.insert oder vault_balances.insert/entry enthalten")
+    });
+    assert!(
+        material_idx < write_idx,
+        "{context}: vault_material_unchanged muss vor cache/vault write kommen (Index-Gate)"
+    );
+    let between = &body[material_idx..write_idx];
+    assert!(
+        between.contains("return false"),
+        "{context}: nach vault_material_unchanged muss return false vor Write kommen (Apply-Skip)"
+    );
+}
+
+fn quote_window_change_flag(body: &str) -> Option<&'static str> {
+    [
+        "quote_window_changed",
+        "quote_window_bins_changed",
+        "window_fingerprint_changed",
+    ]
+    .into_iter()
+    .find(|flag| body.contains(flag))
+}
+
+fn block_range(body: &str, open_brace: usize) -> (usize, usize) {
+    assert!(
+        body[open_brace..].starts_with('{'),
+        "block_range: expected '{{' at {open_brace}"
+    );
+    let mut depth = 0usize;
+    for (offset, ch) in body[open_brace..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return (open_brace + 1, open_brace + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("block_range: unclosed block at {open_brace}");
+}
+
+fn update_slot_write_in_snippet(snippet: &str) -> bool {
+    snippet.contains("update_slot =") || snippet.contains("update_slot:")
+}
+
+fn update_slot_write_positions(body: &str) -> Vec<usize> {
+    let mut positions = Vec::new();
+    for marker in ["update_slot =", "update_slot:"] {
+        let mut start = 0usize;
+        while let Some(rel) = body[start..].find(marker) {
+            let pos = start + rel;
+            if pos == 0 || body.as_bytes()[pos - 1] != b'.' {
+                positions.push(pos);
+            }
+            start = pos + marker.len();
+        }
+    }
+    positions.sort_unstable();
+    positions.dedup();
+    positions
+}
+
+fn is_negated_window_condition(cond: &str, window_flag: &str) -> bool {
+    cond.contains(&format!("!{window_flag}"))
+        || cond.contains(&format!("! {window_flag}"))
+        || cond.contains(&format!("{window_flag} == false"))
+}
+
+fn is_positive_window_condition(cond: &str, window_flag: &str) -> bool {
+    cond.contains(window_flag) && !is_negated_window_condition(cond, window_flag)
+}
+
+fn if_condition_before_else(body: &str, else_keyword_pos: usize) -> Option<&str> {
+    let before = body[..else_keyword_pos].trim_end();
+    if !before.ends_with('}') {
+        return None;
+    }
+    let if_pos = before.rfind("if ")?;
+    let tail = &before[if_pos..];
+    let open_rel = tail.find('{')?;
+    let open = if_pos + open_rel;
+    let (_, if_body_end) = block_range(before, open);
+    if before[if_body_end..].trim() == "}" {
+        Some(before[if_pos + 3..open].trim())
+    } else {
+        None
+    }
+}
+
+fn is_inside_positive_window_if_body(body: &str, write_pos: usize, window_flag: &str) -> bool {
+    let prefix = &body[..write_pos];
+    let mut search = 0usize;
+    while let Some(rel) = prefix[search..].find("if ") {
+        let if_pos = search + rel;
+        if let Some(open_rel) = prefix[if_pos..].find('{') {
+            let open = if_pos + open_rel;
+            let cond = prefix[if_pos + 3..open].trim();
+            if is_positive_window_condition(cond, window_flag) {
+                let (body_start, body_end) = block_range(prefix, open);
+                if write_pos > body_start && write_pos <= body_end {
+                    return true;
+                }
+            }
+        }
+        search = if_pos + 3;
+    }
+    false
+}
+
+fn has_early_return_on_unchanged_window(body: &str, write_pos: usize, window_flag: &str) -> bool {
+    let prefix = &body[..write_pos];
+    let mut search = 0usize;
+    while let Some(rel) = prefix[search..].find("if ") {
+        let if_pos = search + rel;
+        if let Some(open_rel) = prefix[if_pos..].find('{') {
+            let open = if_pos + open_rel;
+            let cond = prefix[if_pos + 3..open].trim();
+            if is_negated_window_condition(cond, window_flag) {
+                let (body_start, body_end) = block_range(prefix, open);
+                if body_end <= write_pos && prefix[body_start..body_end].contains("return") {
+                    return true;
+                }
+            }
+        }
+        search = if_pos + 3;
+    }
+    false
+}
+
+fn update_slot_write_is_gated(body: &str, write_pos: usize, window_flag: &str) -> bool {
+    is_inside_positive_window_if_body(body, write_pos, window_flag)
+        || has_early_return_on_unchanged_window(body, write_pos, window_flag)
+}
+
+/// Positiv: Quote-Window-Flag und update_slot im Body; kein immer-feuernder Else-Bump ohne Flag.
+fn assert_quote_window_gates_update_slot(body: &str, context: &str) {
+    let window_flag = quote_window_change_flag(body).unwrap_or_else(|| {
+        panic!(
+            "{context} muss quote_window_changed, quote_window_bins_changed oder window_fingerprint_changed enthalten"
+        )
+    });
+    let writes = update_slot_write_positions(body);
+    assert!(
+        !writes.is_empty(),
+        "{context} muss update_slot setzen (Material-Slot via Quote-Window-Wechsel)"
+    );
+
+    let mut search = 0usize;
+    while let Some(rel) = body[search..].find("else {") {
+        let else_pos = search + rel;
+        let open = else_pos + "else ".len();
+        let (start, end) = block_range(body, open);
+        let else_body = &body[start..end];
+        if update_slot_write_in_snippet(else_body) {
+            if let Some(cond) = if_condition_before_else(body, else_pos) {
+                assert!(
+                    !is_positive_window_condition(cond, window_flag),
+                    "{context}: else-Zweig darf update_slot nicht setzen (kein Overlay-Bump ohne {window_flag})"
+                );
+            }
+            assert!(
+                update_slot_write_is_gated(body, start, window_flag),
+                "{context}: else-Zweig mit update_slot muss durch {window_flag} gegated sein (kein Overlay-Bump ohne Flag)"
+            );
+        }
+        search = end + 1;
+    }
+
+    for write_pos in writes {
+        assert!(
+            update_slot_write_is_gated(body, write_pos, window_flag),
+            "{context}: update_slot-Zuweisung muss durch {window_flag} gegated sein (kein Overlay-Bump ohne Flag)"
+        );
+    }
+}
+
 fn sample_pool(dex: &str, address: &str) -> QuotePoolInput {
     QuotePoolInput {
         pool_address: address.to_string(),
@@ -201,9 +423,11 @@ fn stale_quote_as_of_ts_not_healed_by_fingerprint_match_alone() {
 }
 
 #[test]
-fn quote_as_of_slot_follows_vault_update_slot() {
-    let pool = sample_pool("orca", "slot_follow_pool");
-    let vault = sample_vault(1_000_000_000_000, 900_000_000, 42, Instant::now());
+fn quote_exact_in_mirrors_vault_update_slot_field() {
+    // A.48: Apply darf vault.update_slot ohne Material-Wechsel nicht bumpen (Source-Grep).
+    // quote_exact_in kopiert das Vault-Feld — das testen wir hier, ohne Slot-Sustain als Soll zu verkaufen.
+    let pool = sample_pool("orca", "vault_field_mirror_pool");
+    let vault = sample_vault(1_000_000_000_000, 1_000_000_000, 42, Instant::now());
     let quote = quote_exact_in(
         &pool,
         Some(&vault),
@@ -215,12 +439,12 @@ fn quote_as_of_slot_follows_vault_update_slot() {
     .expect("quote");
     assert_eq!(
         quote.as_of_slot, vault.update_slot,
-        "PoolQuote.as_of_slot muss Vault-Event-Slot (update_slot) widerspiegeln"
+        "PoolQuote.as_of_slot spiegelt vault.update_slot (Apply-Policy separat via Source-Grep)"
     );
 }
 
 #[test]
-fn identical_reserves_and_slot_keep_as_of_slot_on_requote() {
+fn heartbeat_requote_with_unchanged_vault_keeps_as_of_slot() {
     let pool = sample_pool("pump_amm", "heartbeat_slot_guard_pool");
     let updated_at = Instant::now() - Duration::from_secs(5);
     let vault = sample_vault(1_000_000_000_000, 1_000_000_000, 200, updated_at);
@@ -244,44 +468,10 @@ fn identical_reserves_and_slot_keep_as_of_slot_on_requote() {
     .expect("second quote");
     assert_eq!(
         first.as_of_slot, second.as_of_slot,
-        "identischer Material-Fingerprint + unveraenderter Slot: as_of_slot darf nicht vorruecken (A.48 Heartbeat)"
+        "identischer Material-Fingerprint + unveraenderter vault.update_slot: as_of_slot darf nicht vorruecken (A.48 Heartbeat)"
     );
     assert_eq!(first.as_of_slot, 200);
     assert_eq!(first.state_fingerprint, second.state_fingerprint);
-}
-
-#[test]
-fn event_slot_advance_with_unchanged_fingerprint_updates_as_of_slot() {
-    let pool = sample_pool("orca", "slot_delta_align_pool");
-    let vault_slot_100 = sample_vault(1_000_000_000_000, 1_000_000_000, 100, Instant::now());
-    let quote_100 = quote_exact_in(
-        &pool,
-        Some(&vault_slot_100),
-        None,
-        NATIVE_SOL_MINT,
-        &pool.token_mint,
-        DLMM_PROBE_SOL_LAMPORTS,
-    )
-    .expect("quote slot 100");
-    let vault_slot_102 = sample_vault(1_000_000_000_000, 1_000_000_000, 102, Instant::now());
-    let quote_102 = quote_exact_in(
-        &pool,
-        Some(&vault_slot_102),
-        None,
-        NATIVE_SOL_MINT,
-        &pool.token_mint,
-        DLMM_PROBE_SOL_LAMPORTS,
-    )
-    .expect("quote slot 102");
-    assert_eq!(
-        quote_100.state_fingerprint, quote_102.state_fingerprint,
-        "Reserves unveraendert: Fingerprint gleich"
-    );
-    assert_eq!(quote_102.as_of_slot, 102);
-    assert!(
-        quote_102.as_of_slot > quote_100.as_of_slot,
-        "neuer Geyser-Event-Slot darf as_of_slot nachziehen (slot_delta-Align, kein Heartbeat-Spoof)"
-    );
 }
 
 #[test]
@@ -337,6 +527,15 @@ fn event_vault_apply_uses_geyser_slot_and_instant_now_not_slave_age() {
     assert!(
         body.contains("inc_arb_vault_balance_applied_total"),
         "Event-Apply muss inc_arb_vault_balance_applied_total inkrementieren"
+    );
+    assert!(
+        body.contains("vault_material_unchanged"),
+        "Event-Apply muss unveraendertes Material vor Schreiben filtern (A.48 kein Slot-Sustain)"
+    );
+    assert_forbids_slot_sustain_apply_gate(&body, "consume_vault_seed_from_pool_cache_update");
+    assert_material_unchanged_skips_before_write(
+        &body,
+        "consume_vault_seed_from_pool_cache_update",
     );
     assert!(
         !body.contains("inc_arb_vault_live_snapshot_seeded_total"),
@@ -428,15 +627,29 @@ fn heartbeat_does_not_spoof_material_slot_in_arb_seed_path() {
         fresher_body.contains("vault_material_unchanged") && fresher_body.contains("return false"),
         "live_pool_cache_fresher_than_vault muss bei unveraendertem Material false liefern (kein Slot-Spoof)"
     );
+}
 
-    if prod.contains("fn consume_vault_seed_from_pool_cache_update") {
-        let consume_body = extract_fn_block(prod, "consume_vault_seed_from_pool_cache_update");
-        assert!(
-            consume_body.contains("update.geyser_slot > existing.update_slot")
-                || consume_body.contains("update.geyser_slot >= existing.update_slot"),
-            "Event-Apply: neuer Geyser-Slot darf Pin-Slot nachziehen (slot_delta-Align)"
-        );
+// --- Source-Grep: DLMM Bin-Overlay — Quote-Window-Fingerprint, kein Slot-Sustain ---
+
+#[test]
+fn bin_array_overlay_bumps_vault_slot_only_on_quote_window_fingerprint_change() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
     }
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+    if !prod.contains("fn handle_bin_array_update") {
+        eprintln!("SKIP: handle_bin_array_update not in sibling arb_strategy.rs");
+        return;
+    }
+
+    let body = extract_fn_block(prod, "handle_bin_array_update");
+    assert!(
+        body.contains("dlmm_quote_window_bins_fingerprint")
+            || body.contains("quote_window_bins_fingerprint"),
+        "handle_bin_array_update muss Quote-Window-Bin-Fingerprint fuer Material-Slot nutzen"
+    );
+    assert_quote_window_gates_update_slot(&body, "handle_bin_array_update");
 }
 
 #[test]

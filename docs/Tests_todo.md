@@ -26,11 +26,7 @@ Richtung: pro DEX ein enger Blackbox-Slice, kein All-at-once-Test.
 
 **Prüf-Befehle:** Eval-Workflow „Rust“ (`fmt`, `check`/`build`, `clippy -p ironcrab-eval` ohne `--all-targets`). Volle Suite: Impl Eval Level 5.
 
-### 3. A.48 Arb Quote Contract (Material-Slot / Fingerprint)
-
-Datei `tests/invariants_arb_quote_contract.rs` existiert. Spec-Text A.48 (Material-Slot, Heartbeat darf `as_of_slot` nicht fälschen, Idle-Buy+Live-Sell nicht `passed_gates`) bei Spec-Änderungen gegen diese Tests halten; fehlende Fälle hier nachtragen.
-
-### 4. Optional / niedrig
+### 3. Optional / niedrig
 
 - Control-Plane `ConfigUpdate` Schema-Konsistenz (DoD §I) — bisher ausgelassen.
 - Neue Scopes nur aus Runtime-Evidenz oder ungetesteter DEX-Recovery, nicht aus dem geschlossenen PumpSwap/PumpFun-Rollout.
@@ -53,6 +49,7 @@ Datei `tests/invariants_arb_quote_contract.rs` existiert. Spec-Text A.48 (Materi
 | PumpFun Cashback / Market Order | `invariants_pumpfun_cashback.rs`, `invariants_pumpfun_market_order.rs` |
 | PumpSwap Recovery + A.43/A.44 | gemergt (Eval-Vertrag) |
 | Trailing Session High | `invariants_trailing_session_high.rs` |
+| A.48 Material-Slot / kein Slot-Sustain (2026-09-12) | `invariants_arb_event_quote_clock.rs`, `invariants_arb_quote_contract.rs`, Spec `ARB_QUOTE_CONTRACT.md` |
 
 Migrationsplan für **neue** Tests: Invariante in Spec → Blackbox in eval → Impl-Regression behalten oder ersetzen → CI wie CONTRIBUTING.md.
 
