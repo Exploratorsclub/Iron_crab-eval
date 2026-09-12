@@ -419,27 +419,24 @@ fn bin_array_overlay_bumps_vault_slot_only_on_quote_window_fingerprint_change() 
     if skip_if_no_sibling_iron_crab().is_none() {
         return;
     }
-    let handlers_path = sidefx_handlers_rs_path();
-    if !handlers_path.is_file() {
-        eprintln!("SKIP: sidefx/handlers.rs fehlt unter {:?}", handlers_path);
-        return;
-    }
-    let handlers = read_sidefx_handlers_source();
-    if !handlers.contains("fn handle_bin_array_update") {
-        eprintln!("SKIP: handle_bin_array_update not in sidefx/handlers.rs");
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+    if !prod.contains("fn handle_bin_array_update") {
+        eprintln!("SKIP: handle_bin_array_update not in sibling arb_strategy.rs");
         return;
     }
 
-    let body = extract_fn_block(&handlers, "handle_bin_array_update");
-    let fingerprint_needle = body.contains("dlmm_quote_window_bins_fingerprint")
-        || body.contains("quote_window_bins_fingerprint");
+    let body = extract_fn_block(prod, "handle_bin_array_update");
     assert!(
-        fingerprint_needle,
+        body.contains("dlmm_quote_window_bins_fingerprint")
+            || body.contains("quote_window_bins_fingerprint"),
         "handle_bin_array_update muss Quote-Window-Bin-Fingerprint fuer Material-Slot nutzen"
     );
     assert!(
-        body.contains("vault_material_unchanged") || body.contains("fingerprint"),
-        "Bin-Overlay darf vault.update_slot nur bei Quote-Window-Material-Aenderung setzen"
+        body.contains("quote_window_changed")
+            || body.contains("quote_window_bins_changed")
+            || body.contains("window_fingerprint_changed"),
+        "Bin-Overlay darf vault.update_slot nur bei Quote-Window-Fingerprint-Wechsel setzen (quote_window_changed o.ae.)"
     );
     assert!(
         body.contains("return") || body.contains("continue"),
