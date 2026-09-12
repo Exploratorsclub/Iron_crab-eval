@@ -172,28 +172,168 @@ fn assert_material_unchanged_skips_before_write(body: &str, context: &str) {
     );
 }
 
-/// Bin-Overlay: Slot-Bump nur im `else if quote_window_changed`-Zweig (konkrete Needles, kein Brace-Parser).
-fn assert_handle_bin_array_overlay_gates_slot_bump(body: &str, context: &str) {
+fn quote_window_change_flag(body: &str) -> Option<&'static str> {
+    [
+        "quote_window_changed",
+        "quote_window_bins_changed",
+        "window_fingerprint_changed",
+    ]
+    .into_iter()
+    .find(|flag| body.contains(flag))
+}
+
+fn block_range(body: &str, open_brace: usize) -> (usize, usize) {
     assert!(
-        body.contains("else if quote_window_changed"),
-        "{context} muss else if quote_window_changed enthalten (Overlay-Zweig fuer vault.update_slot)"
+        body[open_brace..].starts_with('{'),
+        "block_range: expected '{{' at {open_brace}"
     );
-    let assign_needle = ".update_slot = update_slot";
-    if !body.contains(assign_needle) {
-        return;
-    }
-    let lines: Vec<&str> = body.lines().collect();
-    for (line_idx, line) in lines.iter().enumerate() {
-        if !line.contains(assign_needle) {
-            continue;
+    let mut depth = 0usize;
+    for (offset, ch) in body[open_brace..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return (open_brace + 1, open_brace + offset);
+                }
+            }
+            _ => {}
         }
-        let start = line_idx.saturating_sub(15);
-        let gated = lines[start..=line_idx]
-            .iter()
-            .any(|prior| prior.contains("quote_window_changed"));
+    }
+    panic!("block_range: unclosed block at {open_brace}");
+}
+
+fn update_slot_write_in_snippet(snippet: &str) -> bool {
+    snippet.contains("update_slot =") || snippet.contains("update_slot:")
+}
+
+fn update_slot_write_positions(body: &str) -> Vec<usize> {
+    let mut positions = Vec::new();
+    for marker in ["update_slot =", "update_slot:"] {
+        let mut start = 0usize;
+        while let Some(rel) = body[start..].find(marker) {
+            let pos = start + rel;
+            if pos == 0 || body.as_bytes()[pos - 1] != b'.' {
+                positions.push(pos);
+            }
+            start = pos + marker.len();
+        }
+    }
+    positions.sort_unstable();
+    positions.dedup();
+    positions
+}
+
+fn is_negated_window_condition(cond: &str, window_flag: &str) -> bool {
+    cond.contains(&format!("!{window_flag}"))
+        || cond.contains(&format!("! {window_flag}"))
+        || cond.contains(&format!("{window_flag} == false"))
+}
+
+fn is_positive_window_condition(cond: &str, window_flag: &str) -> bool {
+    cond.contains(window_flag) && !is_negated_window_condition(cond, window_flag)
+}
+
+fn if_condition_before_else(body: &str, else_keyword_pos: usize) -> Option<&str> {
+    let before = body[..else_keyword_pos].trim_end();
+    if !before.ends_with('}') {
+        return None;
+    }
+    let if_pos = before.rfind("if ")?;
+    let tail = &before[if_pos..];
+    let open_rel = tail.find('{')?;
+    let open = if_pos + open_rel;
+    let (_, if_body_end) = block_range(before, open);
+    if before[if_body_end..].trim() == "}" {
+        Some(before[if_pos + 3..open].trim())
+    } else {
+        None
+    }
+}
+
+fn is_inside_positive_window_if_body(body: &str, write_pos: usize, window_flag: &str) -> bool {
+    let prefix = &body[..write_pos];
+    let mut search = 0usize;
+    while let Some(rel) = prefix[search..].find("if ") {
+        let if_pos = search + rel;
+        if let Some(open_rel) = prefix[if_pos..].find('{') {
+            let open = if_pos + open_rel;
+            let cond = prefix[if_pos + 3..open].trim();
+            if is_positive_window_condition(cond, window_flag) {
+                let (body_start, body_end) = block_range(prefix, open);
+                if write_pos > body_start && write_pos <= body_end {
+                    return true;
+                }
+            }
+        }
+        search = if_pos + 3;
+    }
+    false
+}
+
+fn has_early_return_on_unchanged_window(body: &str, write_pos: usize, window_flag: &str) -> bool {
+    let prefix = &body[..write_pos];
+    let mut search = 0usize;
+    while let Some(rel) = prefix[search..].find("if ") {
+        let if_pos = search + rel;
+        if let Some(open_rel) = prefix[if_pos..].find('{') {
+            let open = if_pos + open_rel;
+            let cond = prefix[if_pos + 3..open].trim();
+            if is_negated_window_condition(cond, window_flag) {
+                let (body_start, body_end) = block_range(prefix, open);
+                if body_end <= write_pos && prefix[body_start..body_end].contains("return") {
+                    return true;
+                }
+            }
+        }
+        search = if_pos + 3;
+    }
+    false
+}
+
+fn update_slot_write_is_gated(body: &str, write_pos: usize, window_flag: &str) -> bool {
+    is_inside_positive_window_if_body(body, write_pos, window_flag)
+        || has_early_return_on_unchanged_window(body, write_pos, window_flag)
+}
+
+/// Positiv: Quote-Window-Flag und update_slot im Body; kein immer-feuernder Else-Bump ohne Flag.
+fn assert_quote_window_gates_update_slot(body: &str, context: &str) {
+    let window_flag = quote_window_change_flag(body).unwrap_or_else(|| {
+        panic!(
+            "{context} muss quote_window_changed, quote_window_bins_changed oder window_fingerprint_changed enthalten"
+        )
+    });
+    let writes = update_slot_write_positions(body);
+    assert!(
+        !writes.is_empty(),
+        "{context} muss update_slot setzen (Material-Slot via Quote-Window-Wechsel)"
+    );
+
+    let mut search = 0usize;
+    while let Some(rel) = body[search..].find("else {") {
+        let else_pos = search + rel;
+        let open = else_pos + "else ".len();
+        let (start, end) = block_range(body, open);
+        let else_body = &body[start..end];
+        if update_slot_write_in_snippet(else_body) {
+            if let Some(cond) = if_condition_before_else(body, else_pos) {
+                assert!(
+                    !is_positive_window_condition(cond, window_flag),
+                    "{context}: else-Zweig darf update_slot nicht setzen (kein Overlay-Bump ohne {window_flag})"
+                );
+            }
+            assert!(
+                update_slot_write_is_gated(body, start, window_flag),
+                "{context}: else-Zweig mit update_slot muss durch {window_flag} gegated sein (kein Overlay-Bump ohne Flag)"
+            );
+        }
+        search = end + 1;
+    }
+
+    for write_pos in writes {
         assert!(
-            gated,
-            "{context}: `{assign_needle}` darf nur mit quote_window_changed im selben Block stehen (Zeile {line_idx}, max 15 Zeilen Kontext)"
+            update_slot_write_is_gated(body, write_pos, window_flag),
+            "{context}: update_slot-Zuweisung muss durch {window_flag} gegated sein (kein Overlay-Bump ohne Flag)"
         );
     }
 }
@@ -509,7 +649,7 @@ fn bin_array_overlay_bumps_vault_slot_only_on_quote_window_fingerprint_change() 
             || body.contains("quote_window_bins_fingerprint"),
         "handle_bin_array_update muss Quote-Window-Bin-Fingerprint fuer Material-Slot nutzen"
     );
-    assert_handle_bin_array_overlay_gates_slot_bump(&body, "handle_bin_array_update");
+    assert_quote_window_gates_update_slot(&body, "handle_bin_array_update");
 }
 
 #[test]
