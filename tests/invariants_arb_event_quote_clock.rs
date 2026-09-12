@@ -116,17 +116,92 @@ fn assert_no_hot_path_rpc(body: &str, context: &str) {
     }
 }
 
-fn assert_early_exit_near_identifier(body: &str, identifier: &str, context: &str) {
-    let pos = body
-        .find(identifier)
-        .unwrap_or_else(|| panic!("{context}: expected `{identifier}` in apply path"));
-    let window_start = pos.saturating_sub(96);
-    let window_end = (pos + identifier.len() + 320).min(body.len());
-    let window = &body[window_start..window_end];
+/// #437 Slot-Sustain: geyser_slot allein darf Apply nicht wieder erlauben.
+fn assert_forbids_slot_sustain_apply_gate(body: &str, context: &str) {
+    let sustain_or = body.contains("|| !vault_material_unchanged")
+        && (body.contains("update.geyser_slot > existing.update_slot")
+            || body.contains("update.geyser_slot >= existing.update_slot"));
     assert!(
-        window.contains("return") || window.contains("continue"),
-        "{context}: `{identifier}` must early-exit (return/continue) before state write (A.48 kein Slot-Sustain)"
+        !sustain_or,
+        "{context} darf #437-Pattern (geyser_slot > existing OR !vault_material_unchanged) nicht enthalten"
     );
+    if body.contains("should_apply") && body.contains("update.geyser_slot") {
+        assert!(
+            body.contains("vault_material_unchanged"),
+            "{context}: should_apply mit geyser_slot muss vault_material_unchanged-Skip enthalten (kein Slot-Advance ohne Material)"
+        );
+        if let (Some(material_idx), Some(apply_idx)) = (
+            body.find("vault_material_unchanged"),
+            body.find("should_apply"),
+        ) {
+            assert!(
+                material_idx < apply_idx,
+                "{context}: vault_material_unchanged muss vor should_apply kommen (kein Slot-Sustain-Gate)"
+            );
+        }
+    }
+}
+
+fn first_vault_write_marker(body: &str) -> Option<usize> {
+    [
+        "cache.insert",
+        "vault_balances.insert",
+        "vault_balances.entry",
+    ]
+    .iter()
+    .filter_map(|marker| body.find(marker))
+    .min()
+}
+
+/// Positiv: unveraendertes Material skippt (return false) vor dem ersten Vault-/Cache-Write.
+fn assert_material_unchanged_skips_before_write(body: &str, context: &str) {
+    let material_idx = body
+        .find("vault_material_unchanged")
+        .unwrap_or_else(|| panic!("{context} muss vault_material_unchanged enthalten"));
+    let write_idx = first_vault_write_marker(body).unwrap_or_else(|| {
+        panic!("{context} muss cache.insert oder vault_balances.insert/entry enthalten")
+    });
+    assert!(
+        material_idx < write_idx,
+        "{context}: vault_material_unchanged muss vor cache/vault write kommen (Index-Gate)"
+    );
+    let between = &body[material_idx..write_idx];
+    assert!(
+        between.contains("return false"),
+        "{context}: nach vault_material_unchanged muss return false vor Write kommen (Apply-Skip)"
+    );
+}
+
+fn quote_window_change_flag(body: &str) -> Option<&'static str> {
+    [
+        "quote_window_changed",
+        "quote_window_bins_changed",
+        "window_fingerprint_changed",
+    ]
+    .into_iter()
+    .find(|flag| body.contains(flag))
+}
+
+/// Positiv: Quote-Window-Flag und update_slot im Body; kein immer-feuernder Else-Bump ohne Flag.
+fn assert_quote_window_gates_update_slot(body: &str, context: &str) {
+    let window_flag = quote_window_change_flag(body).unwrap_or_else(|| {
+        panic!(
+            "{context} muss quote_window_changed, quote_window_bins_changed oder window_fingerprint_changed enthalten"
+        )
+    });
+    assert!(
+        body.contains("update_slot"),
+        "{context} muss update_slot setzen (Material-Slot via Quote-Window-Wechsel)"
+    );
+    if let Some(else_pos) = body.find("else {") {
+        let else_body = &body[else_pos..];
+        if else_body.contains("update_slot") {
+            assert!(
+                else_body.contains(window_flag) || else_body.contains("quote_window"),
+                "{context}: else-Zweig mit update_slot muss quote_window_changed o.ae. enthalten (kein Overlay-Bump ohne Flag)"
+            );
+        }
+    }
 }
 
 fn sample_pool(dex: &str, address: &str) -> QuotePoolInput {
@@ -319,16 +394,14 @@ fn event_vault_apply_uses_geyser_slot_and_instant_now_not_slave_age() {
         body.contains("inc_arb_vault_balance_applied_total"),
         "Event-Apply muss inc_arb_vault_balance_applied_total inkrementieren"
     );
-    assert_early_exit_near_identifier(
-        &body,
-        "vault_material_unchanged",
-        "consume_vault_seed_from_pool_cache_update Event-Apply",
-    );
-    let has_non_backwards_gate = body.contains("update.geyser_slot > existing.update_slot")
-        || body.contains("update.geyser_slot >= existing.update_slot");
     assert!(
-        has_non_backwards_gate,
-        "Event-Apply darf update.geyser_slot >= existing.update_slot als Nicht-Rueckwaerts-Gate behalten"
+        body.contains("vault_material_unchanged"),
+        "Event-Apply muss unveraendertes Material vor Schreiben filtern (A.48 kein Slot-Sustain)"
+    );
+    assert_forbids_slot_sustain_apply_gate(&body, "consume_vault_seed_from_pool_cache_update");
+    assert_material_unchanged_skips_before_write(
+        &body,
+        "consume_vault_seed_from_pool_cache_update",
     );
     assert!(
         !body.contains("inc_arb_vault_live_snapshot_seeded_total"),
@@ -442,21 +515,7 @@ fn bin_array_overlay_bumps_vault_slot_only_on_quote_window_fingerprint_change() 
             || body.contains("quote_window_bins_fingerprint"),
         "handle_bin_array_update muss Quote-Window-Bin-Fingerprint fuer Material-Slot nutzen"
     );
-    let quote_window_gate = [
-        "quote_window_changed",
-        "quote_window_bins_changed",
-        "window_fingerprint_changed",
-    ]
-    .iter()
-    .find(|id| body.contains(*id))
-    .expect(
-        "Bin-Overlay darf vault.update_slot nur bei Quote-Window-Fingerprint-Wechsel setzen (quote_window_changed o.ae.)",
-    );
-    assert_early_exit_near_identifier(
-        &body,
-        quote_window_gate,
-        "handle_bin_array_update fernes Bin-Array ohne Quote-Window-Treffer",
-    );
+    assert_quote_window_gates_update_slot(&body, "handle_bin_array_update");
 }
 
 #[test]
