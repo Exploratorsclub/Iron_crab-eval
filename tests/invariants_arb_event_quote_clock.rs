@@ -172,35 +172,29 @@ fn assert_material_unchanged_skips_before_write(body: &str, context: &str) {
     );
 }
 
-fn quote_window_change_flag(body: &str) -> Option<&'static str> {
-    [
-        "quote_window_changed",
-        "quote_window_bins_changed",
-        "window_fingerprint_changed",
-    ]
-    .into_iter()
-    .find(|flag| body.contains(flag))
-}
-
-/// Positiv: Quote-Window-Flag und update_slot im Body; kein immer-feuernder Else-Bump ohne Flag.
-fn assert_quote_window_gates_update_slot(body: &str, context: &str) {
-    let window_flag = quote_window_change_flag(body).unwrap_or_else(|| {
-        panic!(
-            "{context} muss quote_window_changed, quote_window_bins_changed oder window_fingerprint_changed enthalten"
-        )
-    });
+/// Bin-Overlay: Slot-Bump nur im `else if quote_window_changed`-Zweig (konkrete Needles, kein Brace-Parser).
+fn assert_handle_bin_array_overlay_gates_slot_bump(body: &str, context: &str) {
     assert!(
-        body.contains("update_slot"),
-        "{context} muss update_slot setzen (Material-Slot via Quote-Window-Wechsel)"
+        body.contains("else if quote_window_changed"),
+        "{context} muss else if quote_window_changed enthalten (Overlay-Zweig fuer vault.update_slot)"
     );
-    if let Some(else_pos) = body.find("else {") {
-        let else_body = &body[else_pos..];
-        if else_body.contains("update_slot") {
-            assert!(
-                else_body.contains(window_flag) || else_body.contains("quote_window"),
-                "{context}: else-Zweig mit update_slot muss quote_window_changed o.ae. enthalten (kein Overlay-Bump ohne Flag)"
-            );
+    let assign_needle = ".update_slot = update_slot";
+    if !body.contains(assign_needle) {
+        return;
+    }
+    let lines: Vec<&str> = body.lines().collect();
+    for (line_idx, line) in lines.iter().enumerate() {
+        if !line.contains(assign_needle) {
+            continue;
         }
+        let start = line_idx.saturating_sub(15);
+        let gated = lines[start..=line_idx]
+            .iter()
+            .any(|prior| prior.contains("quote_window_changed"));
+        assert!(
+            gated,
+            "{context}: `{assign_needle}` darf nur mit quote_window_changed im selben Block stehen (Zeile {line_idx}, max 15 Zeilen Kontext)"
+        );
     }
 }
 
@@ -515,7 +509,7 @@ fn bin_array_overlay_bumps_vault_slot_only_on_quote_window_fingerprint_change() 
             || body.contains("quote_window_bins_fingerprint"),
         "handle_bin_array_update muss Quote-Window-Bin-Fingerprint fuer Material-Slot nutzen"
     );
-    assert_quote_window_gates_update_slot(&body, "handle_bin_array_update");
+    assert_handle_bin_array_overlay_gates_slot_bump(&body, "handle_bin_array_update");
 }
 
 #[test]
