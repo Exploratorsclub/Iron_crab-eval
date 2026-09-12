@@ -182,11 +182,10 @@ fn quote_window_change_flag(body: &str) -> Option<&'static str> {
     .find(|flag| body.contains(flag))
 }
 
-fn block_range(body: &str, open_brace: usize) -> (usize, usize) {
-    assert!(
-        body[open_brace..].starts_with('{'),
-        "block_range: expected '{{' at {open_brace}"
-    );
+fn try_block_range(body: &str, open_brace: usize) -> Option<(usize, usize)> {
+    if !body[open_brace..].starts_with('{') {
+        return None;
+    }
     let mut depth = 0usize;
     for (offset, ch) in body[open_brace..].char_indices() {
         match ch {
@@ -194,13 +193,13 @@ fn block_range(body: &str, open_brace: usize) -> (usize, usize) {
             '}' => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
-                    return (open_brace + 1, open_brace + offset);
+                    return Some((open_brace + 1, open_brace + offset));
                 }
             }
             _ => {}
         }
     }
-    panic!("block_range: unclosed block at {open_brace}");
+    None
 }
 
 const UPDATE_SLOT_FIELD: &str = ".update_slot";
@@ -269,27 +268,29 @@ fn if_condition_before_else(body: &str, else_keyword_pos: usize) -> Option<&str>
         return None;
     }
     let if_pos = before.rfind("if ")?;
-    let tail = &before[if_pos..];
-    let open_rel = tail.find('{')?;
-    let open = if_pos + open_rel;
-    let (_, if_body_end) = block_range(before, open);
-    if before[if_body_end..].trim() == "}" {
-        Some(before[if_pos + 3..open].trim())
-    } else {
-        None
+    let open = if_pos + before[if_pos..].find('{')?;
+    let (_, if_body_end) = try_block_range(body, open)?;
+    if if_body_end >= else_keyword_pos || body[if_body_end..else_keyword_pos].trim() != "}" {
+        return None;
     }
+    Some(body[if_pos + 3..open].trim())
 }
 
 fn is_inside_positive_window_if_body(body: &str, write_pos: usize, window_flag: &str) -> bool {
-    let prefix = &body[..write_pos];
     let mut search = 0usize;
-    while let Some(rel) = prefix[search..].find("if ") {
+    while search < write_pos {
+        let Some(rel) = body[search..write_pos].find("if ") else {
+            break;
+        };
         let if_pos = search + rel;
-        if let Some(open_rel) = prefix[if_pos..].find('{') {
-            let open = if_pos + open_rel;
-            let cond = prefix[if_pos + 3..open].trim();
-            if is_positive_window_condition(cond, window_flag) {
-                let (body_start, body_end) = block_range(prefix, open);
+        let Some(open_rel) = body[if_pos..write_pos].find('{') else {
+            search = if_pos + 3;
+            continue;
+        };
+        let open = if_pos + open_rel;
+        let cond = body[if_pos + 3..open].trim();
+        if is_positive_window_condition(cond, window_flag) {
+            if let Some((body_start, body_end)) = try_block_range(body, open) {
                 if write_pos > body_start && write_pos <= body_end {
                     return true;
                 }
@@ -301,16 +302,21 @@ fn is_inside_positive_window_if_body(body: &str, write_pos: usize, window_flag: 
 }
 
 fn has_early_return_on_unchanged_window(body: &str, write_pos: usize, window_flag: &str) -> bool {
-    let prefix = &body[..write_pos];
     let mut search = 0usize;
-    while let Some(rel) = prefix[search..].find("if ") {
+    while search < write_pos {
+        let Some(rel) = body[search..write_pos].find("if ") else {
+            break;
+        };
         let if_pos = search + rel;
-        if let Some(open_rel) = prefix[if_pos..].find('{') {
-            let open = if_pos + open_rel;
-            let cond = prefix[if_pos + 3..open].trim();
-            if is_negated_window_condition(cond, window_flag) {
-                let (body_start, body_end) = block_range(prefix, open);
-                if body_end <= write_pos && prefix[body_start..body_end].contains("return") {
+        let Some(open_rel) = body[if_pos..write_pos].find('{') else {
+            search = if_pos + 3;
+            continue;
+        };
+        let open = if_pos + open_rel;
+        let cond = body[if_pos + 3..open].trim();
+        if is_negated_window_condition(cond, window_flag) {
+            if let Some((body_start, body_end)) = try_block_range(body, open) {
+                if body_end <= write_pos && body[body_start..body_end].contains("return") {
                     return true;
                 }
             }
@@ -342,7 +348,10 @@ fn assert_quote_window_gates_update_slot(body: &str, context: &str) {
     while let Some(rel) = body[search..].find("else {") {
         let else_pos = search + rel;
         let open = else_pos + "else ".len();
-        let (start, end) = block_range(body, open);
+        let Some((start, end)) = try_block_range(body, open) else {
+            search = else_pos + 1;
+            continue;
+        };
         let else_body = &body[start..end];
         if update_slot_write_in_snippet(else_body) {
             if let Some(cond) = if_condition_before_else(body, else_pos) {
