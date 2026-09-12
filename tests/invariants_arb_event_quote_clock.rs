@@ -116,6 +116,19 @@ fn assert_no_hot_path_rpc(body: &str, context: &str) {
     }
 }
 
+fn assert_early_exit_near_identifier(body: &str, identifier: &str, context: &str) {
+    let pos = body
+        .find(identifier)
+        .unwrap_or_else(|| panic!("{context}: expected `{identifier}` in apply path"));
+    let window_start = pos.saturating_sub(96);
+    let window_end = (pos + identifier.len() + 320).min(body.len());
+    let window = &body[window_start..window_end];
+    assert!(
+        window.contains("return") || window.contains("continue"),
+        "{context}: `{identifier}` must early-exit (return/continue) before state write (A.48 kein Slot-Sustain)"
+    );
+}
+
 fn sample_pool(dex: &str, address: &str) -> QuotePoolInput {
     QuotePoolInput {
         pool_address: address.to_string(),
@@ -306,13 +319,10 @@ fn event_vault_apply_uses_geyser_slot_and_instant_now_not_slave_age() {
         body.contains("inc_arb_vault_balance_applied_total"),
         "Event-Apply muss inc_arb_vault_balance_applied_total inkrementieren"
     );
-    assert!(
-        body.contains("vault_material_unchanged"),
-        "Event-Apply muss unveraendertes Material vor Schreiben filtern (A.48 kein Slot-Sustain)"
-    );
-    assert!(
-        body.contains("return") || body.contains("continue"),
-        "vault_material_unchanged muss Apply abbrechen, bevor vault_balances geschrieben wird"
+    assert_early_exit_near_identifier(
+        &body,
+        "vault_material_unchanged",
+        "consume_vault_seed_from_pool_cache_update Event-Apply",
     );
     let has_non_backwards_gate = body.contains("update.geyser_slot > existing.update_slot")
         || body.contains("update.geyser_slot >= existing.update_slot");
@@ -432,15 +442,20 @@ fn bin_array_overlay_bumps_vault_slot_only_on_quote_window_fingerprint_change() 
             || body.contains("quote_window_bins_fingerprint"),
         "handle_bin_array_update muss Quote-Window-Bin-Fingerprint fuer Material-Slot nutzen"
     );
-    assert!(
-        body.contains("quote_window_changed")
-            || body.contains("quote_window_bins_changed")
-            || body.contains("window_fingerprint_changed"),
-        "Bin-Overlay darf vault.update_slot nur bei Quote-Window-Fingerprint-Wechsel setzen (quote_window_changed o.ae.)"
+    let quote_window_gate = [
+        "quote_window_changed",
+        "quote_window_bins_changed",
+        "window_fingerprint_changed",
+    ]
+    .iter()
+    .find(|id| body.contains(*id))
+    .expect(
+        "Bin-Overlay darf vault.update_slot nur bei Quote-Window-Fingerprint-Wechsel setzen (quote_window_changed o.ae.)",
     );
-    assert!(
-        body.contains("return") || body.contains("continue"),
-        "Fernes Bin-Array ohne Quote-Window-Treffer muss Overlay-Apply abbrechen (kein Slot-Bump)"
+    assert_early_exit_near_identifier(
+        &body,
+        quote_window_gate,
+        "handle_bin_array_update fernes Bin-Array ohne Quote-Window-Treffer",
     );
 }
 
