@@ -50,6 +50,7 @@ Richtung: pro DEX ein enger Blackbox-Slice, kein All-at-once-Test.
 | PumpSwap Recovery + A.43/A.44 | gemergt (Eval-Vertrag) |
 | Trailing Session High | `invariants_trailing_session_high.rs` |
 | A.48 Material-Slot / kein Slot-Sustain (2026-09-12) | `invariants_arb_event_quote_clock.rs`, `invariants_arb_quote_contract.rs`, Spec `ARB_QUOTE_CONTRACT.md` |
+| A.48 DLMM constant-price bin walk (Nachzug Walker, 2026-09-12) | `invariants_arb_dlmm_bin_walker.rs` |
 
 Migrationsplan für **neue** Tests: Invariante in Spec → Blackbox in eval → Impl-Regression behalten oder ersetzen → CI wie CONTRIBUTING.md.
 
