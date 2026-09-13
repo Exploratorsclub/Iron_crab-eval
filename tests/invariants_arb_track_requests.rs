@@ -181,6 +181,7 @@ fn phase3_arb_track_requests_schema_roundtrip() {
         active: vec![ArbTrackActiveEntry {
             pool: "Pool111111111111111111111111111111111111111".to_string(),
             reason: ArbTrackActiveReason::MultiDex,
+            readiness: Default::default(),
         }],
         removed: vec![ArbTrackRemovedEntry {
             pool: "Pool222222222222222222222222222222222222222".to_string(),
