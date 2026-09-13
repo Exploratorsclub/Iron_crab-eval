@@ -4,6 +4,8 @@
 //! 2. **Round-Trip-Screening:** 2-hop v2 Profit aus SOL→Token→SOL, nicht Mid-Spread Reserve vs Trade.
 //! 3. **Freshness:** `PoolQuote.fresh` folgt State-TTL (`state_fingerprint` fuer ExecutableMarginal).
 //! 4. **Unified Quoter:** `pool_quote` exportiert aus `ironcrab::arbitrage`.
+//! 5. **Pairing nur Age vs Head (A.48 / PR #440):** Default `arb_max_leg_slot_delta = 0`;
+//!    kein relativer `|buy−sell|`-Reject; Chain-Head-Age (`leg_slot_too_old`), `chain_slot == 0` fail-closed.
 //!
 //! STOP-CHECK (AGENTS.md): nur Eval-Repo; nur Tests; keine Aenderung an `Iron_crab/src/`;
 //! Blackbox API + dokumentierte Source-Grep-Gates (wie `invariants_arb_track_requests.rs`).
@@ -13,9 +15,13 @@ use ironcrab::arbitrage::pool_quote::{
     QuoteKind, QuotePoolInput, QuoteSide, QuoteVaultInput, RoundTripLeg, DLMM_PROBE_SOL_LAMPORTS,
     NATIVE_SOL_MINT,
 };
+use ironcrab::metrics::{
+    record_arb_quote_pair_slot_delta, ARB_TWO_HOP_V2_REJECTED_SLOT_DELTA_EXCEEDED,
+};
 use rust_decimal::Decimal;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 fn sample_pool(dex: &str, address: &str) -> QuotePoolInput {
@@ -113,6 +119,60 @@ fn extract_fn_block(source: &str, fn_name: &str) -> String {
     }
     assert!(end > brace_start, "unclosed fn block for {fn_name}");
     source[start..end].to_string()
+}
+
+fn extract_arb_config_default_body(prod: &str) -> String {
+    let needle = "impl Default for ArbConfig";
+    let start = prod
+        .find(needle)
+        .unwrap_or_else(|| panic!("expected {needle} in arb_strategy.rs"));
+    extract_fn_block(&prod[start..], "default")
+}
+
+/// A.48: Nach `record_arb_quote_pair_slot_delta` darf kein Pflicht-`SlotDeltaExceeded`-Reject folgen.
+fn assert_v2_no_relative_slot_delta_reject_after_record(v2_body: &str) {
+    let record_pos = v2_body
+        .find("record_arb_quote_pair_slot_delta")
+        .unwrap_or_else(|| {
+            panic!("check_arbitrage_v2 muss record_arb_quote_pair_slot_delta fuer Observability nutzen")
+        });
+    let after_record = &v2_body[record_pos..];
+    assert!(
+        !after_record.contains("ArbTwoHopV2RejectReason::SlotDeltaExceeded"),
+        "relativer Slot-Delta-Reject (SlotDeltaExceeded) nach record_arb_quote_pair_slot_delta ist entfernt (A.48)"
+    );
+    assert!(
+        !after_record.contains("arb_max_leg_slot_delta > 0 && slot_delta >"),
+        "relativer |buy−sell|-Gate-Block muss entfernt sein (A.48 Pairing nur Age vs Head)"
+    );
+}
+
+/// A.48: `leg_slot_too_old` vor Spread/Profit; `chain_slot == 0` fail-closed (kein `if chain_slot > 0`-Skip).
+fn assert_v2_chain_head_age_gate_before_spread(v2_body: &str) {
+    let leg_old_pos = v2_body
+        .find("ArbTwoHopV2RejectReason::LegSlotTooOld")
+        .unwrap_or_else(|| panic!("check_arbitrage_v2 muss LegSlotTooOld Age-Gate haben (A.48)"));
+    assert!(
+        v2_body.contains("saturating_sub(buy_as_of_slot)")
+            || v2_body.contains("saturating_sub(sell_as_of_slot)"),
+        "Age-Gate muss chain_head − leg.as_of_slot nutzen (A.48)"
+    );
+    assert!(
+        !v2_body.contains("if chain_slot > 0"),
+        "Age-Gate darf chain_slot==0 nicht ueberspringen (A.48 fail-closed)"
+    );
+    for marker in [
+        "ArbTwoHopV2RejectReason::RoundTripSpreadBelowMin",
+        "RoundTripSpreadBelowMin",
+        "min_spread_bps",
+    ] {
+        if let Some(pos) = v2_body.find(marker) {
+            assert!(
+                leg_old_pos < pos,
+                "LegSlotTooOld muss vor Spread-Gate ({marker}) kommen (A.48)"
+            );
+        }
+    }
 }
 
 // --- E-ARB-1 (M1) ---
@@ -389,5 +449,137 @@ fn two_hop_v2_screening_executable_marginal_only_in_sibling() {
     assert!(
         !v2_body.contains("QuoteKind::LastTradeMid") && !v2_body.contains("LastTradeMid"),
         "check_arbitrage_v2 darf LastTradeMid nicht fuer Screening nutzen (A.48/A.51)"
+    );
+}
+
+// --- A.48 Pairing: Age vs Head (nicht relativer Slot-Delta) ---
+
+/// Blackbox: Slot-Delta-Histogramm ist Observability — kein Pairing-Reject.
+#[test]
+fn record_arb_quote_pair_slot_delta_does_not_increment_slot_delta_exceeded_reject() {
+    let before = ARB_TWO_HOP_V2_REJECTED_SLOT_DELTA_EXCEEDED.load(Ordering::Relaxed);
+    record_arb_quote_pair_slot_delta(10, 100);
+    let after = ARB_TWO_HOP_V2_REJECTED_SLOT_DELTA_EXCEEDED.load(Ordering::Relaxed);
+    assert_eq!(
+        before,
+        after,
+        "|buy−sell|=90 darf allein kein SlotDeltaExceeded ausloesen — Pairing nutzt nur Age vs Head (A.48)"
+    );
+}
+
+/// A.48: Default-Pairing verwirft nicht auf |buy−sell| > 2 (`arb_max_leg_slot_delta: 0`).
+#[test]
+fn arb_config_default_disables_relative_slot_delta_pairing_gate() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+    if !prod.contains("impl Default for ArbConfig") {
+        eprintln!("SKIP: ArbConfig::default not present in sibling arb_strategy.rs");
+        return;
+    }
+
+    let default_body = extract_arb_config_default_body(prod);
+    assert!(
+        default_body.contains("arb_max_leg_slot_delta: 0"),
+        "ArbConfig::default muss arb_max_leg_slot_delta: 0 setzen (A.48 Pairing nur Age vs Head)"
+    );
+    assert!(
+        !default_body.contains("arb_max_leg_slot_delta: 2"),
+        "ArbConfig::default darf nicht arb_max_leg_slot_delta: 2 als Default haben (A.48)"
+    );
+}
+
+/// A.48: Relativer Slot-Delta-Reject-Block in `check_arbitrage_v2` ist entfernt.
+#[test]
+fn check_arbitrage_v2_pairing_uses_chain_head_age_not_relative_slot_delta() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+    if !prod.contains("fn check_arbitrage_v2") {
+        eprintln!("SKIP: check_arbitrage_v2 not present in sibling arb_strategy.rs");
+        return;
+    }
+
+    let v2_body = extract_fn_block(prod, "check_arbitrage_v2");
+    assert_v2_no_relative_slot_delta_reject_after_record(&v2_body);
+    assert_v2_chain_head_age_gate_before_spread(&v2_body);
+}
+
+/// A.48: Idle-Bein (as_of_slot 10) vs Head 100 mit age>16 → `leg_slot_too_old`, nicht `passed_gates`.
+#[test]
+fn check_arbitrage_v2_idle_leg_rejects_leg_slot_too_old_before_spread_gates() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+    if !prod.contains("fn check_arbitrage_v2_rejects_stale_leg_vs_chain_head") {
+        eprintln!(
+            "SKIP: check_arbitrage_v2_rejects_stale_leg_vs_chain_head not in sibling arb_strategy.rs"
+        );
+        return;
+    }
+
+    let test_body = extract_fn_block(prod, "check_arbitrage_v2_rejects_stale_leg_vs_chain_head");
+    assert!(
+        test_body.contains("chain_head_slot: 100") && test_body.contains("980_000_000"),
+        "Stale-Leg-Szenario: buy as_of_slot 10 vs chain head 100 (age 90 > default 16)"
+    );
+    assert!(
+        test_body.contains("arb_max_leg_age_slots: 16"),
+        "Age-Gate-Default 16 Slots im Stale-Leg-Contract-Test"
+    );
+    assert!(
+        test_body.contains("ARB_TWO_HOP_V2_REJECTED_LEG_SLOT_TOO_OLD"),
+        "Idle-Bein vs Head muss leg_slot_too_old inkrementieren (A.48)"
+    );
+    assert!(
+        !test_body.contains("PassedGates") && !test_body.contains("passed_gates"),
+        "Idle-Bein vs Head darf nicht passed_gates erreichen (A.48)"
+    );
+
+    let v2_body = extract_fn_block(prod, "check_arbitrage_v2");
+    assert_v2_chain_head_age_gate_before_spread(&v2_body);
+}
+
+/// A.48: Zwei frische Beine mit |Δ|>2 aber chain−as_of≤16 — relativer Delta allein kein Reject.
+#[test]
+fn check_arbitrage_v2_large_slot_skew_allowed_when_both_legs_within_age_gate() {
+    if skip_if_no_sibling_iron_crab().is_none() {
+        return;
+    }
+
+    let source = read_bin_source("arb_strategy");
+    let prod = production_bin_source(&source);
+    if !prod.contains("fn check_arbitrage_v2") {
+        eprintln!("SKIP: check_arbitrage_v2 not present in sibling arb_strategy.rs");
+        return;
+    }
+
+    let default_body = extract_arb_config_default_body(prod);
+    assert!(
+        default_body.contains("arb_max_leg_slot_delta: 0"),
+        "Default arb_max_leg_slot_delta=0: |Δ|>2 allein darf nicht paaren blockieren (A.48)"
+    );
+
+    let v2_body = extract_fn_block(prod, "check_arbitrage_v2");
+    assert_v2_no_relative_slot_delta_reject_after_record(&v2_body);
+
+    let record_pos = v2_body
+        .find("record_arb_quote_pair_slot_delta")
+        .expect("record_arb_quote_pair_slot_delta");
+    let leg_old_pos = v2_body
+        .find("ArbTwoHopV2RejectReason::LegSlotTooOld")
+        .expect("LegSlotTooOld");
+    assert!(
+        record_pos < leg_old_pos,
+        "Slot-Delta-Observability darf vor Age-Gate liegen; relativer Delta ist kein Pairing-Reject (A.48)"
     );
 }
