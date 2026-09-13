@@ -168,6 +168,7 @@ async fn orca_whirlpool_cold_path_known_pool_missing_reserves_rpc_unreachable_yi
         vault_b_balance: None,
         token_a_program: None,
         token_b_program: None,
+        whirlpool_quote_account_seeded: false,
     };
     orca.inject_cached_orca_state(&pool_addr, &cached)
         .expect("inject_cached_orca_state");
