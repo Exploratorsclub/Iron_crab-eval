@@ -26,7 +26,16 @@ Richtung: pro DEX ein enger Blackbox-Slice, kein All-at-once-Test.
 
 **Prüf-Befehle:** Eval-Workflow „Rust“ (`fmt`, `check`/`build`, `clippy -p ironcrab-eval` ohne `--all-targets`). Volle Suite: Impl Eval Level 5.
 
-### 3. Optional / niedrig
+### 3. Pump AMM v14 Schicht C bis Pin und JetStream (2026-09-15)
+
+**Spec:** A.52 Pin-Payload; KNOWN_BUG_PATTERNS #33. **Impl zuerst** (docs/supervisor/handoff_impl_pump_amm_v14_master_layer_c_20260915.md). Verhalten sitzt in Adressbuch + market_data Sidefx — kein Eval-Blackbox-Zwang. Impl-Unit-Tests sind das Gate.
+
+- Ungepinnt Pump-TX mit len>=14 haelt v14 im Buch auch nach >120 s; kein MASTER / kein Explicit-Zuwachs.
+- Pin danach: MASTER pool_accounts.len()>=14, keine Reserves aus TX.
+- MASTER mit C + Vault-BalanceUpdated: JetStream-Metadata enthaelt dieselben Keys.
+- Kein Test, der Subscribe vor Pin, Hot-Path-RPC, erfundene v14 oder gelockertes 14er-Intent-Gate verlangt.
+
+### 4. Optional / niedrig
 
 - Control-Plane `ConfigUpdate` Schema-Konsistenz (DoD §I) — bisher ausgelassen.
 - Neue Scopes nur aus Runtime-Evidenz oder ungetesteter DEX-Recovery, nicht aus dem geschlossenen PumpSwap/PumpFun-Rollout.
