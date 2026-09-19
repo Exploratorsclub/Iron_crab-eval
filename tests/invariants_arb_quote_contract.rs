@@ -334,9 +334,11 @@ fn dlmm_quote_requires_bins() {
 // --- E-ARB-2 (M2) ---
 
 /// A.48 Round-Trip-Screening: profit = sol_back - probe - fees (fixture pools, kein RPC).
+/// Buy-Leg CPMM (raydium), nicht Orca: ab A.54 liefert Orca `quote_exact_in` ohne Tick-Arrays
+/// `None` — dieser Formeltest bleibt bewusst Vault-x·y=k (supports_cpmm), unabhaengig von Orca CLMM.
 #[test]
 fn round_trip_profit_formula() {
-    let pool_buy = sample_pool("orca", "round_trip_buy");
+    let pool_buy = sample_pool("raydium", "round_trip_buy");
     let pool_sell = sample_pool("pump_amm", "round_trip_sell");
     let vault_buy = sample_vault(1_000_000_000_000, 900_000_000);
     let vault_sell = sample_vault(1_000_000_000_000, 1_100_000_000);
