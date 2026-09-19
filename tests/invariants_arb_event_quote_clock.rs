@@ -464,7 +464,8 @@ fn stale_quote_as_of_ts_not_healed_by_fingerprint_match_alone() {
 fn quote_exact_in_mirrors_vault_update_slot_field() {
     // A.48: Apply darf vault.update_slot ohne Material-Wechsel nicht bumpen (Source-Grep).
     // quote_exact_in kopiert das Vault-Feld — das testen wir hier, ohne Slot-Sustain als Soll zu verkaufen.
-    let pool = sample_pool("orca", "vault_field_mirror_pool");
+    // A.54: Orca-CLMM braucht Tick-Arrays; Fixture nur CPMM (pump_amm) fuer Slot-Spiegel, nicht Orca-Pfad.
+    let pool = sample_pool("pump_amm", "vault_field_mirror_pool");
     let vault = sample_vault(1_000_000_000_000, 1_000_000_000, 42, Instant::now());
     let quote = quote_exact_in(
         &pool,
