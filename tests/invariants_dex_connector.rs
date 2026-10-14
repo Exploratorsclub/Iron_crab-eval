@@ -12,6 +12,7 @@ use solana_pubkey::Pubkey as SplPubkey;
 use solana_sdk::instruction::Instruction;
 use solana_sdk::pubkey::Pubkey;
 use spl_associated_token_account_client::address::get_associated_token_address;
+use spl_token;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -236,7 +237,7 @@ fn contract_pump_amm_build_ix_valid_accounts() {
         100_000,
         user,
         &pool_accounts,
-        None,
+        Some(Pubkey::new_from_array(spl_token::id().to_bytes())),
         false,
         None,
     );
@@ -274,7 +275,7 @@ fn contract_pump_amm_build_ix_preserves_observed_protocol_fee_metas() {
         100_000,
         user,
         &pool_accounts,
-        None,
+        Some(Pubkey::new_from_array(spl_token::id().to_bytes())),
         false,
         None,
     );
@@ -315,7 +316,7 @@ fn contract_pump_amm_build_ix_derives_fee_ta_from_observed_recipient_when_ta_mis
         100_000,
         user,
         &pool_accounts,
-        None,
+        Some(Pubkey::new_from_array(spl_token::id().to_bytes())),
         false,
         None,
     );
@@ -352,7 +353,7 @@ fn contract_pump_amm_build_ix_errors_when_protocol_fee_pubkeys_missing() {
         100_000,
         user,
         &pool_accounts,
-        None,
+        Some(Pubkey::new_from_array(spl_token::id().to_bytes())),
         false,
         None,
     );
@@ -393,14 +394,25 @@ fn contract_pump_amm_build_ix_sell_cashback_remaining_adds_24th_meta() {
         100_000,
         user,
         &pool_accounts,
-        None,
+        Some(Pubkey::new_from_array(spl_token::id().to_bytes())),
         true,
         Some(cashback_third_meta),
     );
 
     assert!(result.is_ok(), "expected Ok: {:?}", result);
     let ixs = result.unwrap();
-    assert_eq!(ixs.len(), 1, "expected exactly one swap instruction");
+    assert!(
+        ixs.len() == 1 || ixs.len() == 2,
+        "expected one swap instruction or CreateIdempotent then swap; got {}",
+        ixs.len()
+    );
+    if ixs.len() == 2 {
+        let pump_program = Pubkey::from_str(PUMPFUN_AMM_PROGRAM_ID).unwrap();
+        assert_ne!(
+            ixs[0].program_id, pump_program,
+            "when two instructions are returned, the first must not be the Pump swap program"
+        );
+    }
 
     let swap_ix = pump_swap_swap_ix(&ixs);
     assert_eq!(
